@@ -2,7 +2,7 @@
 
 Implementation of Kinesis Source Provider in Spark Structured Streaming. [SPARK-18165](https://issues.apache.org/jira/browse/SPARK-18165) describes the need for such implementation. More details on the implementation can be read in this [blog](https://www.qubole.com/blog/kinesis-connector-for-structured-streaming/)
 
-This is a fork of https://github.com/qubole/kinesis-sql with the build configuration and source code updated for building against Spark 3.2.1 in order to fix a number of bugs involving the consumer not receiving new messages after a period of no new messages being added to the Kinesis data stream.
+This is a fork of https://github.com/roncemer/spark-sql-kinesis with the build configuration and source code updated for building against Spark 3.2.1 with scala  binary version 2.13 and  fix isssue with spark-tags issues with _2.12, _2.13 conflicts. 
 
 ## Downloading and Using the Connector
 
