@@ -69,7 +69,7 @@
 
   <properties>
     <sbt.project.name>sql-kinesis</sbt.project.name>
-    <spark.version>3.2.2</spark.version>
+    <spark.version>3.2.3</spark.version>
     <scala.binary.version>2.13</scala.binary.version>
     <fasterxml.jackson.version>2.12.3</fasterxml.jackson.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
