@@ -20,7 +20,7 @@
 
   <groupId>com.roncemer.spark</groupId>
   <artifactId>spark-sql-kinesis_2.13</artifactId>
-  <version>1.2.6_spark-3.4.1</version>
+  <version>1.3.0_spark-4.2.0</version>
   <packaging>jar</packaging>
   <name>Kinesis Integration for Structured Streaming</name>
   <description>Connector to read from and write into Kinesis from Structured Streaming Applications</description>
@@ -66,7 +66,7 @@
     <connection>scm:git:git://github.com/roncemer/spark-sql-kinesis.git</connection>
     <url>http://github.com/roncemer/spark-sql-kinesis</url>
     <developerConnection>scm:git:git@github.com:roncemer/spark-sql-kinesis.git</developerConnection>
-    <tag>spark-sql-kinesis_2.13-1.2.6_spark-3.4.1</tag>
+    <tag>spark-sql-kinesis_2.13-1.3.0_spark-4.2.0</tag>
   </scm>
 
   <inceptionYear>2018</inceptionYear>
@@ -77,12 +77,65 @@
 
   <properties>
     <sbt.project.name>sql-kinesis</sbt.project.name>
-    <spark.version>3.4.1</spark.version>
+    <spark.version>4.2.0</spark.version>
     <scala.binary.version>2.13</scala.binary.version>
-    <fasterxml.jackson.version>2.13.5</fasterxml.jackson.version>
+    <!--
+      Matches spark-parent_2.13:4.2.0's own scala.version, which is also the scala-library
+      that spark-sql pulls in transitively and that the Spark dist ships. Keep compiler and
+      library equal: a compiler older than scala-library trips SIP-51, and a newer one
+      compiles against an older library. Bump only together with Spark.
+    -->
+    <scala.version>2.13.18</scala.version>
+    <java.version>17</java.version>
+    <!--
+      Held at the version spark-parent_2.13:4.2.0 pins, deliberately not the newest jackson.
+      jackson-core/annotations/databind are not shaded into our jar, so at runtime Spark's
+      copy wins; declaring a different version here would only create a compile/runtime skew.
+    -->
+    <fasterxml.jackson.version>2.21.2</fasterxml.jackson.version>
+    <!--
+      AWS SDK v2 replaces v1 (EOL 2025-12-31). Both are current stable releases, ahead of
+      the 2.44.5 / 1.0.6 pair the awslabs connector ships.
+      The KPL groupId moved from com.amazonaws to software.amazon.kinesis; 1.0.x is the
+      SDK-v2-native line and its setCredentialsProvider takes an v2 AwsCredentialsProvider.
+    -->
+    <aws.sdkv2.version>2.51.3</aws.sdkv2.version>
+    <aws.kpl.version>1.0.7</aws.kpl.version>
+    <!--
+      Bundled into the shaded jar because ApacheHttpClient needs them, so their currency is
+      our responsibility rather than the host classpath's. 4.5.14 / 4.4.16 are the final 4.x
+      releases; SDK v2's apache-client is built against the 4.x line, so there is no 5.x path
+      here without swapping the HTTP client itself.
+    -->
+    <httpclient.version>4.5.14</httpclient.version>
+    <httpcore.version>4.4.16</httpcore.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
+
+  <!--
+    Jackson artifacts are not released in lockstep (there is no jackson-annotations
+    2.21.2), so individual versions cannot be pinned from one property. Import the BOM
+    and let it resolve each artifact, which is what spark-parent does.
+  -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${fasterxml.jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws.sdkv2.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
@@ -112,67 +165,91 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!--
+      AWS SDK v2. Versions come from the bom import above.
+      KCL 1.x is gone entirely: it existed only for UserRecord.deaggregate, which is now
+      handled by the vendored AggregatorUtil against the KPL protobuf format.
+    -->
     <dependency>
-      <groupId>com.amazonaws</groupId>
-      <artifactId>amazon-kinesis-client</artifactId>
-      <version>1.14.10</version>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>kinesis</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.amazonaws</groupId>
-      <artifactId>aws-java-sdk</artifactId>
-      <version>1.12.452</version>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sts</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.amazonaws</groupId>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>auth</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>regions</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>apache-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.kinesis</groupId>
       <artifactId>amazon-kinesis-producer</artifactId>
-      <version>0.15.6</version>
+      <version>${aws.kpl.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
-      <version>3.21.6</version>
       <!--
-         We are being explicit about version here and overriding the
-         spark default of 2.5.0 because KCL appears to have introduced
-         a dependency on protobuf 2.6.1 somewhere between KCL 1.4.0 and 1.6.1.
-       -->
+        KPL 1.0.7's generated Messages classes are produced by protoc 4.29.0 (its pom
+        declares protobuf-java-version 4.29.0). A newer 4.x runtime accepts older 4.x
+        gencode, so this runs ahead of both KPL's and the awslabs connector's pin to pick up
+        protobuf fixes; AggregatorUtilSuite is what proves the gencode still loads.
+        Do not drop below 4.29.0: on 3.21.6 the generated code dies at class-init with
+        NoClassDefFoundError: com/google/protobuf/RuntimeVersion$RuntimeDomain, which breaks
+        deaggregation at runtime rather than at build time.
+      -->
+      <version>4.35.1</version>
     </dependency>
+    <!-- Explicit so the bundled HTTP stack is pinned by us, not by apache-client's own pom. -->
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>${httpclient.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpcore</artifactId>
+      <version>${httpcore.version}</version>
+    </dependency>
+    <!-- Versions come from the jackson-bom import above. -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-cbor</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
-    <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <version>4.8.0</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.scalacheck</groupId>
-      <artifactId>scalacheck_${scala.binary.version}</artifactId>
-      <version>1.16.0</version>
-      <scope>test</scope>
-    </dependency>
+    <!--
+      mockito-core and scalacheck were declared here but no test referenced them, so they
+      were dropped rather than upgraded.
+
+      scalatest is pinned to the version spark-parent_2.13:4.1.2 pins, NOT the newest
+      release (3.2.20). Our suites extend StreamTest / SharedSparkSession / OffsetSuite out
+      of Spark's test-jars, which are compiled against 3.2.19; running a different scalatest
+      than those classes were built against risks binary incompatibility for no benefit.
+    -->
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scala.binary.version}</artifactId>
-      <version>3.2.13</version>
+      <version>3.2.19</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -201,7 +278,31 @@
         <plugin>
           <groupId>org.scalatest</groupId>
           <artifactId>scalatest-maven-plugin</artifactId>
-          <version>2.0.0</version>
+          <version>2.2.0</version>
+          <configuration>
+            <!--
+              The plugin forks a JVM and resolves `java` from PATH, which can be an older
+              JDK than the one Maven compiled with (Java 17 classes then fail to load with
+              UnsupportedClassVersionError). Pin the fork to Maven's own JVM.
+              Spark 4 on Java 17 also needs the JDK internals that Spark's own build opens.
+            -->
+            <jvm>${java.home}/bin/java</jvm>
+            <argLine>
+              --add-opens=java.base/java.lang=ALL-UNNAMED
+              --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+              --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+              --add-opens=java.base/java.io=ALL-UNNAMED
+              --add-opens=java.base/java.net=ALL-UNNAMED
+              --add-opens=java.base/java.nio=ALL-UNNAMED
+              --add-opens=java.base/java.util=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+              --add-opens=java.base/sun.security.action=ALL-UNNAMED
+              --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+            </argLine>
+          </configuration>
           <executions>
             <execution>
               <id>test</id>
@@ -214,7 +315,7 @@
         <plugin>
           <groupId>net.alchim31.maven</groupId>
           <artifactId>scala-maven-plugin</artifactId>
-          <version>4.3.0</version>
+          <version>4.9.10</version>
           <executions>
             <execution>
               <id>compile</id>
@@ -240,15 +341,17 @@
             </execution>
           </executions>
           <configuration>
+            <scalaVersion>${scala.version}</scalaVersion>
             <args>
               <arg>-nobootcp</arg>
+              <arg>-release:${java.version}</arg>
             </args>
           </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.8.1</version>
+          <version>3.15.0</version>
           <executions>
             <execution>
               <phase>compile</phase>
@@ -258,14 +361,13 @@
             </execution>
           </executions>
           <configuration>
-            <source>1.8</source>
-            <target>1.8</target>
+            <release>${java.version}</release>
           </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>3.2.1</version>
+          <version>3.6.0</version>
           <executions>
             <execution>
               <phase>package</phase>
@@ -275,12 +377,19 @@
               <configuration>
                 <artifactSet>
                   <includes>
-                    <include>com.amazonaws:amazon-kinesis-client:*</include>
-                    <include>com.amazonaws:amazon-kinesis-producer:*</include>
-                    <include>com.amazonaws:aws-java-sdk-kinesis:*</include>
-                    <include>com.amazonaws:aws-java-sdk-dynamodb:*</include>
-                    <include>com.amazonaws:aws-java-sdk-core:*</include>
-                    <include>com.amazonaws:aws-java-sdk-sts:*</include>
+                    <include>software.amazon.awssdk:*:*</include>
+                    <include>software.amazon.eventstream:eventstream:*</include>
+                    <include>software.amazon.kinesis:amazon-kinesis-producer:*</include>
+                    <include>org.reactivestreams:reactive-streams:*</include>
+                    <include>io.netty:netty-*:*</include>
+                    <!--
+                      ApacheHttpClient (pinned in KinesisReader/STSCredentials) needs these at
+                      runtime. Without them the client fails with NoClassDefFoundError on
+                      org.apache.http.protocol.HttpContext; relying on Spark/Hadoop's own copy
+                      would make the connector's HTTP stack depend on the host classpath.
+                    -->
+                    <include>org.apache.httpcomponents:httpclient:*</include>
+                    <include>org.apache.httpcomponents:httpcore:*</include>
                     <include>com.fasterxml.jackson.dataformat:*:*</include>
                     <include>com.google.protobuf:*:*</include>
                   </includes>
@@ -294,11 +403,41 @@
                     </includes>
                   </relocation>
                   <relocation>
-                    <pattern>com.amazonaws</pattern>
-                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.amazonaws</shadedPattern>
+                    <pattern>software.amazon.awssdk</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.awssdk</shadedPattern>
                     <includes>
-                      <include>com.amazonaws.**</include>
+                      <include>software.amazon.awssdk.**</include>
                     </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>software.amazon.eventstream</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.eventstream</shadedPattern>
+                    <includes>
+                      <include>software.amazon.eventstream.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>software.amazon.kinesis</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.kinesis</shadedPattern>
+                    <includes>
+                      <include>software.amazon.kinesis.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>org.reactivestreams</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.org.reactivestreams</shadedPattern>
+                  </relocation>
+                  <!-- Relocated so the bundled copy cannot clash with Hadoop's httpclient. -->
+                  <relocation>
+                    <pattern>org.apache.http</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.org.apache.http</shadedPattern>
+                    <includes>
+                      <include>org.apache.http.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>io.netty</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.io.netty</shadedPattern>
                   </relocation>
                   <relocation>
                     <pattern>com.google.protobuf</pattern>
@@ -344,17 +483,17 @@
       <plugin>
         <groupId>net.alchim31.maven</groupId>
         <artifactId>scala-maven-plugin</artifactId>
-        <version>4.3.0</version>
+        <version>4.9.10</version>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>3.2.1</version>
+        <version>3.6.0</version>
       </plugin>
       <plugin>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest-maven-plugin</artifactId>
-        <version>2.0.0</version>
+        <version>2.2.0</version>
       </plugin>
     </plugins>
 
@@ -370,7 +509,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-source-plugin</artifactId>
-            <version>3.2.1</version>
+            <version>3.4.0</version>
             <executions>
               <execution>
                 <id>attach-sources</id>
@@ -383,7 +522,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
-            <version>1.5</version>
+            <version>3.2.8</version>
             <executions>
               <execution>
                 <id>sign-artifacts</id>
@@ -397,7 +536,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
-            <version>2.10.1</version>
+            <version>3.12.0</version>
             <executions>
               <execution>
                 <id>create-javadoc-jar</id>
@@ -410,7 +549,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-release-plugin</artifactId>
-            <version>2.5.1</version>
+            <version>3.3.1</version>
             <configuration>
               <autoVersionSubmodules>true</autoVersionSubmodules>
             </configuration>

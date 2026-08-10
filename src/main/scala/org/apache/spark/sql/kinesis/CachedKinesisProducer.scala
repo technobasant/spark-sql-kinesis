@@ -19,15 +19,11 @@ package org.apache.spark.sql.kinesis
 import java.util.Locale
 import java.util.concurrent.{ExecutionException, TimeUnit}
 
-import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import com.amazonaws.auth.{AWSStaticCredentialsProvider, BasicAWSCredentials}
-import com.amazonaws.regions.RegionUtils
-import com.amazonaws.services.kinesis.AmazonKinesis
-import com.amazonaws.services.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration}
 import com.google.common.cache._
 import com.google.common.util.concurrent.{ExecutionError, UncheckedExecutionException}
+import software.amazon.kinesis.producer.{KinesisProducer, KinesisProducerConfiguration}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
@@ -173,14 +169,13 @@ private[kinesis] object CachedKinesisProducer extends Logging {
     guavaCache.invalidateAll()
   }
 
+  /*
+   * SDK v1's RegionUtils could map an endpoint hostname back to a region by consulting its
+   * bundled endpoints metadata. v2 dropped that lookup, so the region is parsed from the
+   * hostname instead (see KinesisReader.regionFromEndpointUrl).
+   */
   def getRegionNameByEndpoint(endpoint: String): String = {
-    val uri = new java.net.URI(endpoint)
-    RegionUtils.getRegionsForService(AmazonKinesis.ENDPOINT_PREFIX)
-      .asScala
-      .find(_.getAvailableEndpoints.asScala.toSeq.contains(uri.getHost))
-      .map(_.getName)
-      .getOrElse(
-        throw new IllegalArgumentException(s"Could not resolve region for endpoint: $endpoint"))
+    KinesisReader.regionFromEndpointUrl(endpoint).id()
   }
 
 }

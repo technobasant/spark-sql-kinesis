@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.kinesis
 
-import com.amazonaws.services.kinesis.model.{SequenceNumberRange, Shard}
+import software.amazon.awssdk.services.kinesis.model.{SequenceNumberRange, Shard}
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.test.SharedSparkSession
@@ -45,11 +45,12 @@ class ShardSyncerSuite extends SparkFunSuite with SharedSparkSession {
   }
 
   private def createShard(shardId: String, seqNum: String): Shard = {
-    new Shard()
-      .withShardId("Shard1")
-      .withSequenceNumberRange(
-        new SequenceNumberRange().withStartingSequenceNumber("1")
+    Shard.builder()
+      .shardId("Shard1")
+      .sequenceNumberRange(
+        SequenceNumberRange.builder().startingSequenceNumber("1").build()
       )
+      .build()
   }
 
 }

@@ -20,7 +20,7 @@ import java.nio.ByteBuffer
 
 import scala.util.Try
 
-import com.amazonaws.services.kinesis.producer.{KinesisProducer, UserRecordResult}
+import software.amazon.kinesis.producer.{KinesisProducer, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures, MoreExecutors}
 
 import org.apache.spark.internal.Logging

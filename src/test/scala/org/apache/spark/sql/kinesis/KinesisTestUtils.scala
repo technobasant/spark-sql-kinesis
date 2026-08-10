@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.kinesis
 
+import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -26,14 +27,13 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.{Failure, Random, Success, Try}
 
-import com.amazonaws.auth.{AWSCredentials, DefaultAWSCredentialsProviderChain}
-import com.amazonaws.regions.RegionUtils
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient
-import com.amazonaws.services.dynamodbv2.document.DynamoDB
-import com.amazonaws.services.kinesis.{AmazonKinesis, AmazonKinesisClient}
-import com.amazonaws.services.kinesis.model._
-import com.amazonaws.services.kinesis.producer.{KinesisProducer => KPLProducer, KinesisProducerConfiguration, UserRecordResult}
 import com.google.common.util.concurrent.{FutureCallback, Futures, MoreExecutors}
+import software.amazon.awssdk.auth.credentials.{AwsCredentials, DefaultCredentialsProvider, StaticCredentialsProvider}
+import software.amazon.awssdk.core.SdkBytes
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.kinesis.KinesisClient
+import software.amazon.awssdk.services.kinesis.model._
+import software.amazon.kinesis.producer.{KinesisProducer => KPLProducer, KinesisProducerConfiguration, UserRecordResult}
 
 import org.apache.spark.internal.Logging
 
@@ -51,19 +51,14 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
   @volatile
   private var _streamName: String = _
 
-  protected lazy val kinesisClient = {
-    val client = new AmazonKinesisClient(KinesisTestUtils.getAWSCredentials())
-    client.setEndpoint(endpointUrl)
-    client
+  protected lazy val kinesisClient: KinesisClient = {
+    KinesisClient.builder()
+      .credentialsProvider(
+        StaticCredentialsProvider.create(KinesisTestUtils.getAWSCredentials()))
+      .region(Region.of(regionName))
+      .endpointOverride(URI.create(endpointUrl))
+      .build()
   }
-
-  /*
-  private lazy val dynamoDB = {
-    val dynamoDBClient = new AmazonDynamoDBClient(new DefaultAWSCredentialsProviderChain())
-    dynamoDBClient.setRegion(RegionUtils.getRegion(regionName))
-    new DynamoDB(dynamoDBClient)
-  }
-  */
 
   protected def getProducer(aggregate: Boolean): KinesisDataGenerator = {
     if (!aggregate) {
@@ -85,9 +80,10 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
 
     // Create a stream. The number of shards determines the provisioned throughput.
     logInfo(s"Creating stream ${_streamName}")
-    val createStreamRequest = new CreateStreamRequest()
-    createStreamRequest.setStreamName(_streamName)
-    createStreamRequest.setShardCount(streamShardCount)
+    val createStreamRequest = CreateStreamRequest.builder()
+      .streamName(_streamName)
+      .shardCount(streamShardCount)
+      .build()
     kinesisClient.createStream(createStreamRequest)
 
     // The stream is now being created. Wait for it to become active.
@@ -97,15 +93,18 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
   }
 
   def getShards(): Seq[Shard] = {
-    kinesisClient.describeStream(_streamName).getStreamDescription.getShards.asScala.toSeq
+    kinesisClient.describeStream(
+      DescribeStreamRequest.builder().streamName(_streamName).build())
+      .streamDescription.shards.asScala.toSeq
   }
 
   def splitShard(shardId: String): Unit = {
-    val splitShardRequest = new SplitShardRequest()
-    splitShardRequest.withStreamName(_streamName)
-    splitShardRequest.withShardToSplit(shardId)
-    // Set a half of the max hash value
-    splitShardRequest.withNewStartingHashKey("170141183460469231731687303715884105728")
+    val splitShardRequest = SplitShardRequest.builder()
+      .streamName(_streamName)
+      .shardToSplit(shardId)
+      // Set a half of the max hash value
+      .newStartingHashKey("170141183460469231731687303715884105728")
+      .build()
     kinesisClient.splitShard(splitShardRequest)
     // Wait for the shards to become active
     waitForStreamToBeActive(_streamName)
@@ -113,18 +112,19 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
 
   def splitShard : (Integer, Integer) = {
     val shardToSplit = getShards().head
-    splitShard(shardToSplit.getShardId)
+    splitShard(shardToSplit.shardId)
     val (splitOpenShards, splitCloseShards) = getShards().partition {
-      shard => shard.getSequenceNumberRange.getEndingSequenceNumber == null
+      shard => shard.sequenceNumberRange.endingSequenceNumber == null
     }
     (splitOpenShards.size, splitCloseShards.size)
   }
 
   def mergeShard(shardToMerge: String, adjacentShardToMerge: String): Unit = {
-    val mergeShardRequest = new MergeShardsRequest
-    mergeShardRequest.withStreamName(_streamName)
-    mergeShardRequest.withShardToMerge(shardToMerge)
-    mergeShardRequest.withAdjacentShardToMerge(adjacentShardToMerge)
+    val mergeShardRequest = MergeShardsRequest.builder()
+      .streamName(_streamName)
+      .shardToMerge(shardToMerge)
+      .adjacentShardToMerge(adjacentShardToMerge)
+      .build()
     kinesisClient.mergeShards(mergeShardRequest)
     // Wait for the shards to become active
     waitForStreamToBeActive(_streamName)
@@ -133,14 +133,14 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
 
   def mergeShard: (Integer, Integer) = {
     val (openShard, closeShard) = getShards().partition {
-      shard => shard.getSequenceNumberRange.getEndingSequenceNumber == null
+      shard => shard.sequenceNumberRange.endingSequenceNumber == null
     }
     val Seq(shardToMerge, adjShard) = openShard
-    mergeShard(shardToMerge.getShardId, adjShard.getShardId)
+    mergeShard(shardToMerge.shardId, adjShard.shardId)
     val shardToSplit = getShards().head
     val (mergedOpenShards, mergedCloseShards) =
       getShards().partition {
-        shard => shard.getSequenceNumberRange.getEndingSequenceNumber == null
+        shard => shard.sequenceNumberRange.endingSequenceNumber == null
       }
     (mergedOpenShards.size, mergedCloseShards.size)
   }
@@ -167,7 +167,8 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
   def deleteStream(): Unit = {
     try {
       if (streamCreated) {
-        kinesisClient.deleteStream(streamName)
+        kinesisClient.deleteStream(
+          DeleteStreamRequest.builder().streamName(streamName).build())
       }
     } catch {
       case e: Exception =>
@@ -190,8 +191,9 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
 
   private def describeStream(streamNameToDescribe: String): Option[StreamDescription] = {
     try {
-      val describeStreamRequest = new DescribeStreamRequest().withStreamName(streamNameToDescribe)
-      val desc = kinesisClient.describeStream(describeStreamRequest).getStreamDescription()
+      val describeStreamRequest =
+        DescribeStreamRequest.builder().streamName(streamNameToDescribe).build()
+      val desc = kinesisClient.describeStream(describeStreamRequest).streamDescription()
       Some(desc)
     } catch {
       case rnfe: ResourceNotFoundException =>
@@ -214,9 +216,10 @@ private[kinesis] class KinesisTestUtils(streamShardCount: Int = 2) extends Loggi
     while (System.currentTimeMillis() < endTime) {
       Thread.sleep(TimeUnit.SECONDS.toMillis(describeStreamPollTimeSeconds))
       describeStream(streamNameToWaitFor).foreach { description =>
-        val streamStatus = description.getStreamStatus()
+        // v2 returns a StreamStatus enum rather than a String.
+        val streamStatus = description.streamStatus()
         logDebug(s"\t- current state: $streamStatus\n")
-        if ("ACTIVE".equals(streamStatus)) {
+        if (StreamStatus.ACTIVE == streamStatus) {
           return
         }
       }
@@ -233,13 +236,7 @@ private[kinesis] object KinesisTestUtils {
   val regionName: String = getRegionNameByEndpoint(endpointUrl)
 
   def getRegionNameByEndpoint(endpoint: String): String = {
-    val uri = new java.net.URI(endpoint)
-    RegionUtils.getRegionsForService(AmazonKinesis.ENDPOINT_PREFIX)
-      .asScala
-      .find(_.getAvailableEndpoints.asScala.toSeq.contains(uri.getHost))
-      .map(_.getName)
-      .getOrElse(
-        throw new IllegalArgumentException(s"Could not resolve region for endpoint: $endpoint"))
+    KinesisReader.regionFromEndpointUrl(endpoint).id()
   }
 
   lazy val shouldRunTests = {
@@ -272,13 +269,13 @@ private[kinesis] object KinesisTestUtils {
   }
 
   def isAWSCredentialsPresent: Boolean = {
-    Try { new DefaultAWSCredentialsProviderChain().getCredentials() }.isSuccess
+    Try { DefaultCredentialsProvider.create().resolveCredentials() }.isSuccess
   }
 
-  def getAWSCredentials(): AWSCredentials = {
+  def getAWSCredentials(): AwsCredentials = {
     assert(shouldRunTests,
       "Kinesis test not enabled, should not attempt to get AWS credentials")
-    Try { new DefaultAWSCredentialsProviderChain().getCredentials() } match {
+    Try { DefaultCredentialsProvider.create().resolveCredentials() } match {
       case Success(cred) =>
         cred
       case Failure(e) =>
@@ -286,7 +283,7 @@ private[kinesis] object KinesisTestUtils {
           s"""
              |Kinesis tests enabled using environment variable $envVarNameForEnablingTests
              |but could not find AWS credentials. Please follow instructions in AWS documentation
-             |to set the credentials in your system such that the DefaultAWSCredentialsProviderChain
+             |to set the credentials in your system such that the DefaultCredentialsProvider
              |can find the credentials.
            """.stripMargin)
     }
@@ -300,21 +297,22 @@ private[kinesis] trait KinesisDataGenerator {
 }
 
 private[kinesis] class SimpleDataGenerator(
-    client: AmazonKinesisClient) extends KinesisDataGenerator {
+    client: KinesisClient) extends KinesisDataGenerator {
   override def sendData(streamName: String, data: Array[String]):
   Map[String, Seq[(String, String)]] = {
     val shardIdToSeqNumbers =
       new mutable.HashMap[String, ArrayBuffer[(String, String)]]()
     data.foreach { num =>
       val str = num.toString
-      val data = ByteBuffer.wrap(str.getBytes(StandardCharsets.UTF_8))
-      val putRecordRequest = new PutRecordRequest().withStreamName(streamName)
-        .withData(data)
-        .withPartitionKey(str)
+      val putRecordRequest = PutRecordRequest.builder()
+        .streamName(streamName)
+        .data(SdkBytes.fromByteArray(str.getBytes(StandardCharsets.UTF_8)))
+        .partitionKey(str)
+        .build()
 
       val putRecordResult = client.putRecord(putRecordRequest)
-      val shardId = putRecordResult.getShardId
-      val seqNumber = putRecordResult.getSequenceNumber()
+      val shardId = putRecordResult.shardId
+      val seqNumber = putRecordResult.sequenceNumber()
       val sentSeqNumbers = shardIdToSeqNumbers.getOrElseUpdate(shardId,
         new ArrayBuffer[(String, String)]())
       sentSeqNumbers += ((num, seqNumber))
@@ -369,7 +367,7 @@ private[kinesis] class KPLDataGenerator(regionName: String) extends KinesisDataG
       Futures.addCallback(future, kinesisCallBack, MoreExecutors.directExecutor())
     }
     producer.flushSync()
-    shardIdToSeqNumbers.mapValues(_.toSeq).toMap
+    shardIdToSeqNumbers.view.mapValues(_.toSeq).toMap
   }
 }
 

@@ -165,8 +165,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
       .option("startingposition", "TRIM_HORIZON")
       .option("kinesis.client.avoidEmptyBatches", true)
 
@@ -222,8 +222,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
 
     val kinesis = reader.load()
       .selectExpr("CAST(data AS STRING)")
@@ -270,8 +270,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         .format("kinesis")
         .option("streamName", localTestUtils.streamName)
         .option("endpointUrl", localTestUtils.endpointUrl)
-        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
         .option("startingposition", "earliest")
 
       val kinesis = reader.load().selectExpr("CAST(data AS STRING)").as[ String ]
@@ -318,8 +318,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         .format("kinesis")
         .option("streamName", localTestUtils.streamName)
         .option("endpointUrl", localTestUtils.endpointUrl)
-        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
         .option("startingposition", "TRIM_HORIZON")
 
       val kinesis = reader.load()
@@ -343,14 +343,14 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         AssertOnQuery { query =>
           logInfo("Merging Shards")
           val (openShard, closeShard) = localTestUtils.getShards().partition { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           val Seq(shardToMerge, adjShard) = openShard
-          localTestUtils.mergeShard(shardToMerge.getShardId, adjShard.getShardId)
+          localTestUtils.mergeShard(shardToMerge.shardId, adjShard.shardId)
           val shardToSplit = localTestUtils.getShards().head
           val (mergedOpenShards, mergedCloseShards) = localTestUtils.getShards().partition
           { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           // We should have two closed shards and one open shard
           assert(mergedCloseShards.size == 2)
@@ -401,8 +401,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         .format("kinesis")
         .option("streamName", localTestUtils.streamName)
         .option("endpointUrl", localTestUtils.endpointUrl)
-        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
         .option("startingposition", "LATEST")
         .option("kinesis.client.describeShardInterval", "0")
 
@@ -427,14 +427,14 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         AssertOnQuery { query =>
           logInfo("Merging Shards")
           val (openShard, closeShard) = localTestUtils.getShards().partition { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           val Seq(shardToMerge, adjShard) = openShard
-          localTestUtils.mergeShard(shardToMerge.getShardId, adjShard.getShardId)
+          localTestUtils.mergeShard(shardToMerge.shardId, adjShard.shardId)
           val shardToSplit = localTestUtils.getShards().head
           val (mergedOpenShards, mergedCloseShards) = localTestUtils.getShards().partition
           { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           // We should have two closed shards and one open shard
           assert(mergedCloseShards.size == 2)
@@ -473,8 +473,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
 
     val kinesis = reader.load()
       .selectExpr("CAST(data AS STRING)")
@@ -492,8 +492,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
 
     val kinesis = reader.load()
       .selectExpr("CAST(data AS STRING)")
@@ -527,8 +527,8 @@ abstract class KinesisSourceSuite(aggregateTestData: Boolean) extends KinesisSou
         .format("kinesis")
         .option("streamName", testUtils.streamName)
         .option("endpointUrl", testUtils.endpointUrl)
-        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
 
     val kinesis = reader.load()
       .selectExpr("CAST(data AS STRING)")
@@ -591,8 +591,8 @@ abstract class KinesisStressSourceSuite(aggregateTestData: Boolean) extends Kine
         .format("kinesis")
         .option("streamName", localTestUtils.streamName)
         .option("endpointUrl", localTestUtils.endpointUrl)
-        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+        .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+        .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
         .option("kinesis.client.describeShardInterval", "0")
 
       val kinesis = reader.load()
@@ -618,9 +618,9 @@ abstract class KinesisStressSourceSuite(aggregateTestData: Boolean) extends Kine
         AssertOnQuery { query =>
           logInfo("Spliting Shards")
           val shardToSplit = localTestUtils.getShards().head
-          localTestUtils.splitShard(shardToSplit.getShardId)
+          localTestUtils.splitShard(shardToSplit.shardId)
           val (splitOpenShards, splitCloseShards) = localTestUtils.getShards().partition { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           // We should have one closed shard and two open shards
           assert(splitCloseShards.size == 1)
@@ -640,14 +640,14 @@ abstract class KinesisStressSourceSuite(aggregateTestData: Boolean) extends Kine
         AssertOnQuery { query =>
           logInfo("Merging Shards")
           val (openShard, closeShard) = localTestUtils.getShards().partition { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           val Seq(shardToMerge, adjShard) = openShard
-          localTestUtils.mergeShard(shardToMerge.getShardId, adjShard.getShardId)
+          localTestUtils.mergeShard(shardToMerge.shardId, adjShard.shardId)
           val shardToSplit = localTestUtils.getShards().head
           val (mergedOpenShards, mergedCloseShards) = localTestUtils.getShards().partition
           { shard =>
-            shard.getSequenceNumberRange.getEndingSequenceNumber == null
+            shard.sequenceNumberRange.endingSequenceNumber == null
           }
           // We should have three closed shards and one open shard
           assert(mergedCloseShards.size == 3)
@@ -706,8 +706,8 @@ class EmptyBatchTestSuite extends KinesisSourceTest {
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
       .option("kinesis.client.avoidEmptyBatches", "true")
 
     val kinesis = reader.load()
@@ -764,8 +764,8 @@ class EmptyBatchTestSuite extends KinesisSourceTest {
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
       .option("kinesis.client.avoidEmptyBatches", "false")
 
     val kinesis = reader.load()

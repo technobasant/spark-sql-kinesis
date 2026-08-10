@@ -18,18 +18,23 @@
 package org.apache.spark.sql.kinesis
 
 import java.math.BigInteger
+import java.net.URI
+import java.time.Instant
 import java.util
 import java.util.{ArrayList, Locale}
 import java.util.concurrent.{Executors, ThreadFactory}
 
-import com.amazonaws.AbortedException
-import com.amazonaws.services.kinesis.AmazonKinesisClient
-import com.amazonaws.services.kinesis.clientlibrary.types.UserRecord
-import com.amazonaws.services.kinesis.model.{GetRecordsRequest, ListShardsRequest, Shard, _}
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
+
+import software.amazon.awssdk.core.exception.AbortedException
+import software.amazon.awssdk.http.apache.ApacheHttpClient
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain
+import software.amazon.awssdk.services.kinesis.KinesisClient
+import software.amazon.awssdk.services.kinesis.model.{GetRecordsRequest, GetRecordsResponse, GetShardIteratorRequest, GetShardIteratorResponse, KinesisException, LimitExceededException, ListShardsRequest, ListShardsResponse, ProvisionedThroughputExceededException, Record, ResourceNotFoundException, Shard, ShardIteratorType}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.types._
@@ -74,12 +79,26 @@ private[kinesis] case class KinesisReader(
 
   private val maxSupportedShardsPerStream = 10000;
 
-  private var _amazonClient: AmazonKinesisClient = null
+  private val aggregatorUtil = new AggregatorUtil
 
-  private def getAmazonClient(): AmazonKinesisClient = {
+  private var _amazonClient: KinesisClient = null
+
+  /*
+   * SDK v1 inferred the region from setEndpoint; v2 requires it explicitly alongside any
+   * endpoint override, so it is derived from the endpoint URL here.
+   */
+  private def getAmazonClient(): KinesisClient = {
     if (_amazonClient == null) {
-      _amazonClient = new AmazonKinesisClient(kinesisCredsProvider.provider)
-      _amazonClient.setEndpoint(endpointUrl)
+      _amazonClient = KinesisClient.builder()
+        .credentialsProvider(kinesisCredsProvider.provider)
+        .region(KinesisReader.regionFromEndpointUrl(endpointUrl))
+        .endpointOverride(URI.create(endpointUrl))
+        // Pinned rather than left to SPI discovery. The KPL pulls in url-connection-client
+        // via the Glue schema registry, so two sync HTTP implementations are registered and
+        // ServiceLoader ordering would decide which one is used. Apache is the pooling
+        // client, matching what the SDK v1 client used before this migration.
+        .httpClientBuilder(ApacheHttpClient.builder())
+        .build()
     }
     _amazonClient
   }
@@ -93,7 +112,7 @@ private[kinesis] case class KinesisReader(
   def close(): Unit = {
     runUninterruptibly {
       if (_amazonClient != null) {
-        _amazonClient.shutdown()
+        _amazonClient.close()
         _amazonClient = null
       }
     }
@@ -105,46 +124,49 @@ private[kinesis] case class KinesisReader(
                        iteratorPosition: String,
                        failOnDataLoss: Boolean = true): String = {
 
-    val getShardIteratorRequest = new GetShardIteratorRequest
-    getShardIteratorRequest.setShardId(shardId)
-    getShardIteratorRequest.setStreamName(streamName)
-    getShardIteratorRequest.setShardIteratorType(iteratorType)
+    val requestBuilder = GetShardIteratorRequest.builder()
+      .shardId(shardId)
+      .streamName(streamName)
+      .shardIteratorType(ShardIteratorType.fromValue(iteratorType))
 
     if (iteratorType == "AFTER_SEQUENCE_NUMBER" || iteratorType == "AT_SEQUENCE_NUMBER") {
-      getShardIteratorRequest.setStartingSequenceNumber(iteratorPosition)
+      requestBuilder.startingSequenceNumber(iteratorPosition)
     }
 
     if (iteratorType == "AT_TIMESTAMP") {
       logDebug(s"TimeStamp while getting shard iterator ${
-        (new java.util.Date(iteratorPosition.toLong)).toString}")
-      getShardIteratorRequest.setTimestamp(new java.util.Date(iteratorPosition.toLong))
+        Instant.ofEpochMilli(iteratorPosition.toLong).toString}")
+      requestBuilder.timestamp(Instant.ofEpochMilli(iteratorPosition.toLong))
     }
 
+    val getShardIteratorRequest = requestBuilder.build()
+
     runUninterruptibly {
-      retryOrTimeout[GetShardIteratorResult](
+      retryOrTimeout[GetShardIteratorResponse](
         s"Fetching Shard Iterator") {
         try {
           getAmazonClient.getShardIterator(getShardIteratorRequest)
         } catch {
           case r: ResourceNotFoundException =>
             if (!failOnDataLoss) {
-              new GetShardIteratorResult()
+              GetShardIteratorResponse.builder().build()
             }
             else {
               throw r
             }
         }
       }
-    }.getShardIterator
+    }.shardIterator
   }
 
 
-  def getKinesisRecords(shardIterator: String, limit: Int): GetRecordsResult = {
-    val getRecordsRequest = new GetRecordsRequest
-    getRecordsRequest.setShardIterator(shardIterator)
-    getRecordsRequest.setLimit(limit)
-    val getRecordsResult: GetRecordsResult = runUninterruptibly {
-      retryOrTimeout[ GetRecordsResult ](s"get Records for a shard ") {
+  def getKinesisRecords(shardIterator: String, limit: Int): GetRecordsResponse = {
+    val getRecordsRequest = GetRecordsRequest.builder()
+      .shardIterator(shardIterator)
+      .limit(limit)
+      .build()
+    val getRecordsResult: GetRecordsResponse = runUninterruptibly {
+      retryOrTimeout[ GetRecordsResponse ](s"get Records for a shard ") {
         getAmazonClient.getRecords(getRecordsRequest)
       }
     }
@@ -152,45 +174,50 @@ private[kinesis] case class KinesisReader(
   }
 
 
+  /*
+   * Splits KPL-aggregated records. Replaces KCL 1.x's UserRecord.deaggregate; the SDK v1
+   * subclass check it relied on is gone because v2's Record is final, so aggregation is now
+   * detected from the record payload's magic bytes instead (see AggregatorUtil).
+   */
   def deaggregateRecords(records: util.List[ Record ], shard: Shard): util.List[ Record] = {
-    // We deaggregate if and only if we got actual Kinesis records, i.e.
-    // not instances of some subclass thereof.
-    if ( !records.isEmpty && records.get(0).getClass.equals(classOf[ Record ]) ) {
-      if ( shard != null ) {
-        return UserRecord.deaggregate(
-          records,
-          new BigInteger(shard.getHashKeyRange.getStartingHashKey),
-          new BigInteger(shard.getHashKeyRange.getEndingHashKey))
-          .asInstanceOf[ util.List[ _ ] ].asInstanceOf[ util.List[ Record ] ]
-      } else {
-        return UserRecord.deaggregate(records)
-          .asInstanceOf[ util.List[ _ ] ].asInstanceOf[ util.List[ Record ] ]
-      }
+    if (records.isEmpty) {
+      records
+    } else if (shard != null) {
+      aggregatorUtil.deaggregate(
+        records,
+        new BigInteger(shard.hashKeyRange.startingHashKey),
+        new BigInteger(shard.hashKeyRange.endingHashKey))
+    } else {
+      aggregatorUtil.deaggregate(records)
     }
-    records
   }
 
   private def listShards(): Seq[Shard] = {
-    var nextToken = ""
-    var returnedToken = ""
+    var nextToken: String = null
     val shards = new ArrayList[Shard]()
-    val listShardsRequest = new ListShardsRequest
-    listShardsRequest.setStreamName(streamName)
-    listShardsRequest.setMaxResults(maxSupportedShardsPerStream)
 
     do {
-      val listShardsResult: ListShardsResult = runUninterruptibly {
-        retryOrTimeout[ListShardsResult]( s"List shards") {
+      // A ListShards request carries either a stream name or a next-token, never both.
+      val listShardsRequest = if (nextToken == null) {
+        ListShardsRequest.builder()
+          .streamName(streamName)
+          .maxResults(maxSupportedShardsPerStream)
+          .build()
+      } else {
+        ListShardsRequest.builder()
+          .nextToken(nextToken)
+          .maxResults(maxSupportedShardsPerStream)
+          .build()
+      }
+
+      val listShardsResult: ListShardsResponse = runUninterruptibly {
+        retryOrTimeout[ListShardsResponse]( s"List shards") {
             getAmazonClient.listShards(listShardsRequest)
         }
       }
-      shards.addAll(listShardsResult.getShards)
-      returnedToken = listShardsResult.getNextToken()
-      if (returnedToken != null) {
-        nextToken = returnedToken
-        listShardsRequest.setNextToken(nextToken)
-      }
-    } while (!nextToken.isEmpty)
+      shards.addAll(listShardsResult.shards)
+      nextToken = listShardsResult.nextToken()
+    } while (nextToken != null && !nextToken.isEmpty)
 
     shards.asScala.toSeq
   }
@@ -239,8 +266,8 @@ private[kinesis] case class KinesisReader(
               logWarning(s"Error while $message [attempt = ${retryCount + 1}]", lee)
             case ae: AbortedException =>
               logWarning(s"Error while $message [attempt = ${retryCount + 1}]", ae)
-            case ake: AmazonKinesisException =>
-              if (ake.getStatusCode() >= 500) {
+            case ake: KinesisException =>
+              if (ake.statusCode() >= 500) {
                 logWarning(s"Error while $message [attempt = ${retryCount + 1}]", ake)
               } else {
                 throw new IllegalStateException(s"Error while $message", ake)
@@ -261,6 +288,26 @@ private[kinesis] case class KinesisReader(
 
 
 private [kinesis]  object KinesisReader {
+
+  /*
+   * SDK v1's setEndpoint derived the region from the endpoint hostname; v2 has no equivalent,
+   * so parse it. Handles the standard `kinesis.<region>.amazonaws.com` form (and the China
+   * `.amazonaws.com.cn` variant), and falls back to the ambient default region for custom or
+   * local endpoints such as kinesalite.
+   */
+  private[kinesis] def regionFromEndpointUrl(endpointUrl: String): Region = {
+    val host = Option(URI.create(endpointUrl).getHost).getOrElse("")
+    val fromHost = host.split('.') match {
+      case parts if parts.length >= 3 && parts(0).startsWith("kinesis") => Some(parts(1))
+      case _ => None
+    }
+    fromHost
+      .filter(id => Region.regions().asScala.exists(_.id == id))
+      .map(Region.of)
+      .getOrElse {
+        new DefaultAwsRegionProviderChain().getRegion
+      }
+  }
 
   val kinesisSchema: StructType =
       StructType(Seq(

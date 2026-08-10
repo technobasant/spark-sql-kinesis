@@ -83,8 +83,8 @@ class KinesisReaderSuite extends SharedSparkSession with PrivateMethodTester {
           Map.empty[String, String],
           "Test",
           BasicCredentials(
-            KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-            KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+            KinesisTestUtils.getAWSCredentials().accessKeyId,
+            KinesisTestUtils.getAWSCredentials().secretAccessKey
           ),
           KinesisTestUtils.endpointUrl
         )
@@ -99,8 +99,8 @@ class KinesisReaderSuite extends SharedSparkSession with PrivateMethodTester {
         Map.empty[String, String],
         "Test",
         BasicCredentials(
-          KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-          KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+          KinesisTestUtils.getAWSCredentials().accessKeyId,
+          KinesisTestUtils.getAWSCredentials().secretAccessKey
         ),
         KinesisTestUtils.endpointUrl
       )
@@ -117,8 +117,8 @@ class KinesisReaderSuite extends SharedSparkSession with PrivateMethodTester {
           Map.empty[String, String],
           "Test",
           BasicCredentials(
-            KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-            KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+            KinesisTestUtils.getAWSCredentials().accessKeyId,
+            KinesisTestUtils.getAWSCredentials().secretAccessKey
           ),
           KinesisTestUtils.endpointUrl
         )
