@@ -21,7 +21,7 @@ import java.util.Locale
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.kinesis.KinesisTestUtils.{envVarNameForEnablingTests, shouldRunTests}
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.streaming.util.StreamManualClock
@@ -97,8 +97,8 @@ class KinesisSinkSuite extends KinesisSinkTest {
     val options = Map[String, String](
       "streamName" -> testUtils.streamName,
       "endpointUrl" -> testUtils.endpointUrl,
-      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().accessKeyId,
+      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().secretAccessKey
     )
 
     try {
@@ -140,8 +140,8 @@ class KinesisSinkSuite extends KinesisSinkTest {
     val options = Map[String, String](
       "streamName" -> testUtils.streamName,
       "endpointUrl" -> testUtils.endpointUrl,
-      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().accessKeyId,
+      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().secretAccessKey
     )
 
     val input = MemoryStream[String]
@@ -202,8 +202,8 @@ class KinesisSinkSuite extends KinesisSinkTest {
     val writerOptions = Map[String, String](
       "streamName" -> testUtils.streamName,
       "endpointUrl" -> testUtils.endpointUrl,
-      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId,
-      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().getAWSSecretKey
+      "AWSAccessKeyId" -> KinesisTestUtils.getAWSCredentials().accessKeyId,
+      "AWSSecretKey" -> KinesisTestUtils.getAWSCredentials().secretAccessKey
     )
 
     val reader = createKinesisReader()
@@ -240,8 +240,8 @@ class KinesisSinkSuite extends KinesisSinkTest {
       .format("kinesis")
       .option("streamName", testUtils.streamName)
       .option("endpointUrl", testUtils.endpointUrl)
-      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().getAWSAccessKeyId)
-      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().getAWSSecretKey)
+      .option("AWSAccessKeyId", KinesisTestUtils.getAWSCredentials().accessKeyId)
+      .option("AWSSecretKey", KinesisTestUtils.getAWSCredentials().secretAccessKey)
       .load
   }
 

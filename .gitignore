@@ -98,3 +98,5 @@ spark-warehouse/
 .vscode/
 .metals/
 .bloop/
+# Local MCP server config (machine-specific, may reference local paths/tokens)
+.mcp.json

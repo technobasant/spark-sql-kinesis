@@ -21,7 +21,7 @@ import java.io._
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-import com.amazonaws.services.kinesis.model.Record
+import software.amazon.awssdk.services.kinesis.model.Record
 import org.apache.hadoop.conf.Configuration
 import scala.collection.parallel.ForkJoinTaskSupport
 import scala.collection.parallel.CollectionConverters._
@@ -67,6 +67,15 @@ private[kinesis] class KinesisSource(
   private def sc: SparkContext = {
     sqlContext.sparkContext
   }
+
+  /*
+   * Spark 4 split SparkSession/SQLContext into an api-level type and a `classic`
+   * implementation, and internalCreateDataFrame now lives only on the latter.
+   * StreamSourceProvider still hands us the api-level SQLContext, but a DSv1 streaming
+   * source only ever runs on Spark Classic, so narrowing here is safe.
+   */
+  private def classicSqlContext: org.apache.spark.sql.classic.SQLContext =
+    sqlContext.asInstanceOf[org.apache.spark.sql.classic.SQLContext]
 
   private def kinesisReader: KinesisReader = {
     new KinesisReader(sourceOptions, streamName, kinesisCredsProvider, endPointURL)
@@ -121,15 +130,30 @@ private[kinesis] class KinesisSource(
     failOnDataLoss
   }
 
+  /*
+   * `kinesisReader` is a def, so every reference builds a new KinesisReader — and each one
+   * starts a thread in its constructor and an AWS client on first call. Referencing it twice
+   * here therefore created two of each per shard per batch, and neither was ever closed
+   * (stop() closes a third, freshly built one). Bind it once and close it.
+   */
+  private def withReader[T](body: KinesisReader => T): T = {
+    val reader = kinesisReader
+    try {
+      body(reader)
+    } finally {
+      reader.close()
+    }
+  }
+
   /** Makes an API call to get one record for a shard. Return true if the call is successful  */
-  def hasNewData(shardInfo: ShardInfo): Boolean = {
-    val shardIterator = kinesisReader.getShardIterator(
+  def hasNewData(shardInfo: ShardInfo): Boolean = withReader { reader =>
+    val shardIterator = reader.getShardIterator(
       shardInfo.shardId,
       shardInfo.iteratorType,
       shardInfo.iteratorPosition)
-    val records = kinesisReader.getKinesisRecords(shardIterator, 1)
+    val records = reader.getKinesisRecords(shardIterator, 1)
     // Return true if we can get back a record. Or if we have not reached the end of the stream
-    (records.getRecords.size() > 0 || records.getMillisBehindLatest.longValue() > 0)
+    (records.records.size() > 0 || records.millisBehindLatest.longValue() > 0)
   }
 
   def canCreateNewBatch(shardsInfo: Array[ShardInfo]): Boolean = {
@@ -167,7 +191,7 @@ private[kinesis] class KinesisSource(
       if (prevBatchId < 0
         || latestDescribeShardTimestamp == -1
         || ((latestDescribeShardTimestamp + describeShardInterval) < System.currentTimeMillis())) {
-        val latestShards = kinesisReader.getShards()
+        val latestShards = withReader(_.getShards())
         latestDescribeShardTimestamp = System.currentTimeMillis()
         ShardSyncer.getLatestShardInfo(latestShards, prevShardsInfo,
           initialPosition, failOnDataLoss)
@@ -227,12 +251,16 @@ private[kinesis] class KinesisSource(
 
     val rdd = kinesisSourceRDD.map { r: Record =>
       InternalRow(
-        r.getData.array(),
+        // asByteArrayUnsafe avoids the defensive copy asByteArray would make. Safe here:
+        // the array is handed straight to the InternalRow and the Record is discarded, so
+        // nothing mutates it afterwards. This keeps the v1 zero-copy behaviour of
+        // getData.array() without v1's risk of exposing backing-buffer slack.
+        r.data.asByteArrayUnsafe(),
         UTF8String.fromString(streamName),
-        UTF8String.fromString(r.getPartitionKey),
-        UTF8String.fromString(r.getSequenceNumber),
-        DateTimeUtils.fromJavaTimestamp(
-          new java.sql.Timestamp(r.getApproximateArrivalTimestamp.getTime))
+        UTF8String.fromString(r.partitionKey),
+        UTF8String.fromString(r.sequenceNumber),
+        // v2 returns an Instant rather than a java.util.Date.
+        DateTimeUtils.instantToMicros(r.approximateArrivalTimestamp)
       )
     }
 
@@ -244,15 +272,20 @@ private[kinesis] class KinesisSource(
     logInfo("GetBatch generating RDD of offset range: " +
       shardInfos.mkString(", "))
 
-    sqlContext.internalCreateDataFrame(rdd, schema, isStreaming = true)
+    classicSqlContext.internalCreateDataFrame(rdd, schema, isStreaming = true)
 
   }
 
   override def schema: StructType = KinesisReader.kinesisSchema
 
-  /** Stop this source and free any resources it has allocated. */
+  /**
+   * Stop this source and free any resources it has allocated.
+   *
+   * Readers are created and closed per operation (see withReader), so there is nothing
+   * long-lived left to release here; this remains a no-op close for symmetry.
+   */
   override def stop(): Unit = synchronized {
-    kinesisReader.close()
+    withReader(_ => ())
   }
 
   override def commit(end: Offset): Unit = {

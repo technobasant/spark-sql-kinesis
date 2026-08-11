@@ -20,6 +20,9 @@ package org.apache.spark.sql.kinesis
 import java.io.File
 
 import org.apache.spark.sql.execution.streaming._
+// Spark 4.1 relocated these out of the flat `streaming` package.
+import org.apache.spark.sql.execution.streaming.checkpointing.{OffsetSeq, OffsetSeqLog}
+import org.apache.spark.sql.execution.streaming.runtime.{LongOffset, SerializedOffset}
 import org.apache.spark.sql.streaming.OffsetSuite
 import org.apache.spark.sql.test.SharedSparkSession
 

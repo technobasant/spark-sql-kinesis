@@ -16,27 +16,34 @@
  */
 package org.apache.spark.sql.kinesis
 
-import com.amazonaws.auth._
+import software.amazon.awssdk.auth.credentials.{AwsBasicCredentials, AwsCredentialsProvider, AwsSessionCredentials, DefaultCredentialsProvider, StaticCredentialsProvider}
+import software.amazon.awssdk.http.apache.ApacheHttpClient
+import software.amazon.awssdk.services.sts.StsClient
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest
 
 import org.apache.spark.annotation.Evolving
 import org.apache.spark.internal.Logging
 
 /**
  * Serializable interface providing a method executors can call to obtain an
- * AWSCredentialsProvider instance for authenticating to AWS services.
+ * AwsCredentialsProvider instance for authenticating to AWS services.
+ *
+ * `provider` is intentionally a def: AWS SDK v2 providers are not serializable, so each
+ * executor constructs its own on first use.
  */
 private[kinesis] sealed trait SparkAWSCredentials extends Serializable {
   /**
-   * Return an AWSCredentialProvider instance that can be used by the Kinesis Client
-   * Library to authenticate to AWS services (Kinesis, CloudWatch and DynamoDB).
+   * Return an AwsCredentialsProvider instance that can be used to authenticate to AWS
+   * services (Kinesis, CloudWatch and DynamoDB).
    */
-  def provider: AWSCredentialsProvider
+  def provider: AwsCredentialsProvider
 }
 
-/** Returns DefaultAWSCredentialsProviderChain for authentication. */
+/** Returns the SDK v2 default credentials provider chain. */
 private[kinesis] final case object DefaultCredentials extends SparkAWSCredentials {
 
-  def provider: AWSCredentialsProvider = new DefaultAWSCredentialsProviderChain
+  def provider: AwsCredentialsProvider = DefaultCredentialsProvider.create()
 }
 
 /*
@@ -45,47 +52,51 @@ private[kinesis] final case object DefaultCredentials extends SparkAWSCredential
 
 private[kinesis] final case object InstanceProfileCredentials
   extends SparkAWSCredentials {
-  def provider: AWSCredentialsProvider = new AWSInstanceProfileCredentialsProviderWithRetries
+  def provider: AwsCredentialsProvider = new AWSInstanceProfileCredentialsProviderWithRetries
 }
 
 
 /**
- * Returns AWSStaticCredentialsProvider constructed using basic AWS keypair. Falls back to using
- * DefaultCredentialsProviderChain if unable to construct a AWSCredentialsProviderChain
- * instance with the provided arguments (e.g. if they are null).
+ * Returns a StaticCredentialsProvider constructed using a basic AWS keypair. Falls back to
+ * the default provider chain if unable to construct one with the provided arguments
+ * (e.g. if they are null).
  */
 private[kinesis] final case class BasicCredentials(
     awsAccessKeyId: String,
     awsSecretKey: String) extends SparkAWSCredentials with Logging {
 
-  def provider: AWSCredentialsProvider = try {
-    new AWSStaticCredentialsProvider(new BasicAWSCredentials(awsAccessKeyId, awsSecretKey))
+  def provider: AwsCredentialsProvider = try {
+    StaticCredentialsProvider.create(AwsBasicCredentials.create(awsAccessKeyId, awsSecretKey))
   } catch {
     case e: IllegalArgumentException =>
-      logWarning("Unable to construct AWSStaticCredentialsProvider with provided keypair; " +
-        "falling back to DefaultCredentialsProviderChain.", e)
-      new DefaultAWSCredentialsProviderChain
+      logWarning("Unable to construct StaticCredentialsProvider with provided keypair; " +
+        "falling back to the default credentials provider chain.", e)
+      DefaultCredentialsProvider.create()
   }
 }
 
 private[kinesis] final case class BasicAWSSessionCredentials(
     awsAccessKeyId: String,
-    awsSecretKey: String, 
+    awsSecretKey: String,
     sessionToken: String) extends SparkAWSCredentials with Logging {
 
-  def provider: AWSCredentialsProvider = try {
-    new AWSStaticCredentialsProvider(new BasicSessionCredentials(awsAccessKeyId, awsSecretKey, sessionToken))
+  def provider: AwsCredentialsProvider = try {
+    StaticCredentialsProvider.create(
+      AwsSessionCredentials.create(awsAccessKeyId, awsSecretKey, sessionToken))
   } catch {
     case e: IllegalArgumentException =>
-      logWarning("Unable to construct AWSStaticCredentialsProvider with provided keyparir; " +
-        "falling back to DefaultCredentialsProviderChain.", e)
-      new DefaultAWSCredentialsProviderChain
+      logWarning("Unable to construct StaticCredentialsProvider with provided keypair; " +
+        "falling back to the default credentials provider chain.", e)
+      DefaultCredentialsProvider.create()
   }
 }
 
 /**
- * Returns an STSAssumeRoleSessionCredentialsProvider instance which assumes an IAM
- * role in order to authenticate against resources in an external account.
+ * Returns a StsAssumeRoleCredentialsProvider which assumes an IAM role in order to
+ * authenticate against resources in an external account.
+ *
+ * The STS client resolves its region from the default region provider chain (AWS_REGION
+ * or the active profile), mirroring how the SDK v1 provider used the global endpoint.
  */
 private[kinesis] final case class STSCredentials(
     stsRoleArn: String,
@@ -94,16 +105,23 @@ private[kinesis] final case class STSCredentials(
     longLivedCreds: SparkAWSCredentials = DefaultCredentials)
   extends SparkAWSCredentials  {
 
-  def provider: AWSCredentialsProvider = {
-    val builder = new STSAssumeRoleSessionCredentialsProvider.Builder(stsRoleArn, stsSessionName)
-      .withLongLivedCredentialsProvider(longLivedCreds.provider)
-    stsExternalId match {
-      case Some(stsExternalId) =>
-        builder.withExternalId(stsExternalId)
-          .build()
-      case None =>
-        builder.build()
-    }
+  def provider: AwsCredentialsProvider = {
+    val stsClient = StsClient.builder()
+      .credentialsProvider(longLivedCreds.provider)
+      // Pinned for the same reason as KinesisReader.getAmazonClient: two sync HTTP
+      // implementations are registered, so leave nothing to ServiceLoader ordering.
+      .httpClientBuilder(ApacheHttpClient.builder())
+      .build()
+
+    val requestBuilder = AssumeRoleRequest.builder()
+      .roleArn(stsRoleArn)
+      .roleSessionName(stsSessionName)
+    stsExternalId.foreach(requestBuilder.externalId)
+
+    StsAssumeRoleCredentialsProvider.builder()
+      .stsClient(stsClient)
+      .refreshRequest(requestBuilder.build())
+      .build()
   }
 }
 
@@ -114,7 +132,7 @@ object SparkAWSCredentials {
   class Builder {
     private var basicCreds: Option[BasicCredentials] = None
     private var stsCreds: Option[STSCredentials] = None
-    private var basicSessionCreds: Option[BasicSessionCredentials] = None
+    private var basicSessionCreds: Option[BasicAWSSessionCredentials] = None
 
     // scalastyle:off
     /**
@@ -122,7 +140,7 @@ object SparkAWSCredentials {
      *
      * @note The given AWS keypair will be saved in DStream checkpoints if checkpointing is
      * enabled. Make sure that your checkpoint directory is secure. Prefer using the
-     * [[http://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/credentials.html#credentials-default default provider chain]]
+     * [[https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html default provider chain]]
      * instead if possible.
      *
      * @param accessKeyId AWS access key ID
@@ -150,7 +168,7 @@ object SparkAWSCredentials {
      */
     // scalastyle:on
     def basicSessionCredentials(accessKeyId: String, secretKey: String, securityToken: String): Builder = {
-      basicSessionCreds = Option(new BasicSessionCredentials(
+      basicSessionCreds = Option(BasicAWSSessionCredentials(
         accessKeyId,
         secretKey,
         securityToken))
@@ -194,7 +212,13 @@ object SparkAWSCredentials {
     def build(): SparkAWSCredentials =
       stsCreds.map(_.copy(longLivedCreds = longLivedCreds)).getOrElse(longLivedCreds)
 
-    private def longLivedCreds: SparkAWSCredentials = basicCreds.getOrElse(DefaultCredentials)
+    /*
+     * Session credentials are checked first because they are the more specific of the two
+     * static forms. Note that before the SDK v2 migration `basicSessionCreds` was stored
+     * but never consulted here, so basicSessionCredentials(...) silently had no effect.
+     */
+    private def longLivedCreds: SparkAWSCredentials =
+      basicSessionCreds.orElse(basicCreds).getOrElse(DefaultCredentials)
   }
 
 

@@ -23,7 +23,9 @@ import scala.collection.mutable.HashMap
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.execution.streaming.Offset
-import org.apache.spark.sql.execution.streaming.SerializedOffset
+// Spark 4.1 moved the real SerializedOffset to ...streaming.runtime; the old path is now
+// an apply-only forwarder, so importing it leaves `case so: SerializedOffset` unresolvable.
+import org.apache.spark.sql.execution.streaming.runtime.SerializedOffset
 
  /*
   * @param shardsToOffsets

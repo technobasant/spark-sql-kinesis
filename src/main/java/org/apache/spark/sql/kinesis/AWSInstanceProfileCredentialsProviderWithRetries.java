@@ -1,49 +1,55 @@
 package org.apache.spark.sql.kinesis;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.InstanceProfileCredentialsProvider;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.InstanceProfileCredentialsProvider;
+import software.amazon.awssdk.core.exception.SdkClientException;
 
+/**
+ * Retries IMDS credential lookups with exponential backoff.
+ *
+ * <p>AWS SDK v2's {@link InstanceProfileCredentialsProvider} is final, so this delegates
+ * rather than extending it as the SDK v1 version did. The retry loop is kept because the
+ * SDK's own IMDS retry budget is smaller than the 10 attempts this connector has always
+ * used when an executor starts before the node's IMDS is answering.
+ */
 public class AWSInstanceProfileCredentialsProviderWithRetries
-        extends InstanceProfileCredentialsProvider {
+        implements AwsCredentialsProvider {
 
-    private static final Log LOG =
-            LogFactory.getLog(AWSInstanceProfileCredentialsProviderWithRetries.class);
+    private static final Logger LOG =
+            LoggerFactory.getLogger(AWSInstanceProfileCredentialsProviderWithRetries.class);
 
-    public AWSCredentials getCredentials() {
-        int retries = 10;
-        int sleep = 500;
-        while(retries > 0) {
+    private static final int MAX_RETRIES = 10;
+    private static final int INITIAL_SLEEP_MS = 500;
+    private static final int MAX_SLEEP_MS = 10000;
+
+    private final InstanceProfileCredentialsProvider delegate =
+            InstanceProfileCredentialsProvider.create();
+
+    @Override
+    public AwsCredentials resolveCredentials() {
+        int retries = MAX_RETRIES;
+        int sleep = INITIAL_SLEEP_MS;
+        while (retries > 0) {
             try {
-                return super.getCredentials();
-            }
-            catch (RuntimeException re) {
-                LOG.error("Got an exception while fetching credentials " + re);
+                return delegate.resolveCredentials();
+            } catch (RuntimeException | Error t) {
+                LOG.error("Got an exception while fetching credentials", t);
                 --retries;
                 try {
                     Thread.sleep(sleep);
                 } catch (InterruptedException ie) {
-                    // Do Nothing here
+                    Thread.currentThread().interrupt();
+                    throw SdkClientException.create(
+                            "Interrupted while waiting to retry credential lookup", ie);
                 }
-                if (sleep < 10000) {
-                    sleep *= 2;
-                }
-            }
-            catch (Error error) {
-                LOG.error("Got an exception while fetching credentials " + error);
-                --retries;
-                try {
-                    Thread.sleep(sleep);
-                } catch (InterruptedException ie) {
-                    // Do Nothing here
-                }
-                if (sleep < 10000) {
+                if (sleep < MAX_SLEEP_MS) {
                     sleep *= 2;
                 }
             }
         }
-        throw new AmazonClientException("Unable to load credentials.");
+        throw SdkClientException.create("Unable to load credentials.");
     }
 }

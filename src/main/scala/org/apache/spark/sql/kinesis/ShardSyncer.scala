@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.kinesis
 
-import com.amazonaws.services.kinesis.model.Shard
+import software.amazon.awssdk.services.kinesis.model.Shard
 import scala.collection.mutable
 
 import org.apache.spark.internal.Logging
@@ -37,11 +37,11 @@ private[kinesis] object ShardSyncer extends Logging {
 
     val shardIdToShardMap =
       latestShards.map {
-        s => (s.getShardId -> s)
+        s => (s.shardId -> s)
       }.toMap
 
     for ((shardId, shard) <- shardIdToShardMap) {
-      val parentShardId: String = shard.getParentShardId
+      val parentShardId: String = shard.parentShardId
       if ( parentShardId != null && shardIdToShardMap.contains(parentShardId) ) {
         shardIdToChildShardsMap += (
           parentShardId ->
@@ -49,7 +49,7 @@ private[kinesis] object ShardSyncer extends Logging {
           )
       }
 
-      val adjacentParentShardId: String = shard.getAdjacentParentShardId
+      val adjacentParentShardId: String = shard.adjacentParentShardId
       if ( adjacentParentShardId != null && shardIdToShardMap.contains(adjacentParentShardId) ) {
         shardIdToChildShardsMap += (
           adjacentParentShardId ->
@@ -66,7 +66,7 @@ private[kinesis] object ShardSyncer extends Logging {
               s"This can happen due to a race condition between listShards and a" +
               s" reshard operation")
           case Some(parentShard: Shard) =>
-            if (parentShard.getSequenceNumberRange().getEndingSequenceNumber == null) {
+            if (parentShard.sequenceNumberRange.endingSequenceNumber == null) {
               throw new IllegalStateException(s"ShardId $parentShardId is not closed. " +
                 s"This can happen due to a race condition between listShards and a " +
                 s"reshard operation")
@@ -86,7 +86,7 @@ private[kinesis] object ShardSyncer extends Logging {
 
     val shardIdToShardMap =
       latestShards.map {
-        s => (s.getShardId -> s)
+        s => (s.shardId -> s)
       }.toMap
 
     if (!memoizationContext.contains(shardId) &&
@@ -123,16 +123,16 @@ private[kinesis] object ShardSyncer extends Logging {
      shard: Shard,
      shards: Seq[Shard]): mutable.HashSet[String] = {
     val parentShardIds = new mutable.HashSet[ String ]
-    val parentShardId = shard.getParentShardId
+    val parentShardId = shard.parentShardId
     val shardIdToShardMap =
       shards.map {
-        s => (s.getShardId -> s)
+        s => (s.shardId -> s)
       }.toMap
 
     if ((parentShardId != null) && shardIdToShardMap.contains(parentShardId)) {
       parentShardIds.add(parentShardId)
     }
-    val adjacentParentShardId = shard.getAdjacentParentShardId
+    val adjacentParentShardId = shard.adjacentParentShardId
     if ( (adjacentParentShardId != null) && shardIdToShardMap.contains(adjacentParentShardId)) {
       parentShardIds.add(adjacentParentShardId)
     }
@@ -147,7 +147,7 @@ private[kinesis] object ShardSyncer extends Logging {
   def openShards(shards: Seq[Shard]): Seq[String] = {
     // List of open Shards
     shards.collect {
-      case s: Shard if (s.getSequenceNumberRange.getEndingSequenceNumber == null) => s.getShardId
+      case s: Shard if (s.sequenceNumberRange.endingSequenceNumber == null) => s.shardId
     }
   }
 
@@ -160,7 +160,7 @@ private[kinesis] object ShardSyncer extends Logging {
   def closedShards(shards: Seq[Shard]): Seq[String] = {
     // List of closed Shards
     shards.collect {
-      case s: Shard if (s.getSequenceNumberRange.getEndingSequenceNumber != null) => s.getShardId
+      case s: Shard if (s.sequenceNumberRange.endingSequenceNumber != null) => s.shardId
     }
   }
 
@@ -205,7 +205,7 @@ private[kinesis] object ShardSyncer extends Logging {
       s: ShardInfo => prevShardsList.add(s.shardId)
     }
     latestShards.foreach {
-      s: Shard => latestShardsList.add(s.getShardId)
+      s: Shard => latestShardsList.add(s.shardId)
     }
     // check for deleted shards
     val deletedShardsList = prevShardsList.diff(latestShardsList)

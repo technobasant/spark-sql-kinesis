@@ -16,7 +16,7 @@
  */
 package org.apache.spark.sql.kinesis
 
-import com.amazonaws.services.kinesis.model.{GetRecordsResult, Record}
+import software.amazon.awssdk.services.kinesis.model.{GetRecordsResponse, Record}
 import java.io.Serializable
 import java.util.Locale
 import scala.collection.JavaConverters._
@@ -189,19 +189,19 @@ private[kinesis] class KinesisSourceRDD(
               // if failOnDataLoss is false, getShardIterator() will be null and we should stop
               // fetching more records
               addDelayInFetchingRecords(currentTimestamp)
-              val records: GetRecordsResult = kinesisReader.getKinesisRecords(
+              val records: GetRecordsResponse = kinesisReader.getKinesisRecords(
                 _shardIterator, recordPerRequest)
               // de-aggregate records
-              val deaggregateRecords = kinesisReader.deaggregateRecords(records.getRecords, null)
+              val deaggregateRecords = kinesisReader.deaggregateRecords(records.records, null)
               fetchedRecords = deaggregateRecords.asScala.toArray
-              _shardIterator = records.getNextShardIterator
+              _shardIterator = records.nextShardIterator
               lastReadTimeMs = System.currentTimeMillis()
-              logDebug(s"Milli secs behind is ${records.getMillisBehindLatest.longValue()}")
+              logDebug(s"Milli secs behind is ${records.millisBehindLatest.longValue()}")
               if ( _shardIterator == null ) {
                 hasShardClosed = true
                 fetchNext = false
               }
-              if ( records.getMillisBehindLatest.longValue() == 0 ) {
+              if ( records.millisBehindLatest.longValue() == 0 ) {
                 fetchNext = false
               }
             }
@@ -223,7 +223,7 @@ private[kinesis] class KinesisSourceRDD(
           if (numRecordRead > maxRecordsPerShard) {
             fetchNext = false
           }
-          lastReadSequenceNumber = record.getSequenceNumber
+          lastReadSequenceNumber = record.sequenceNumber
           record
         }
       }

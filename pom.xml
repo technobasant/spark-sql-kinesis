@@ -18,13 +18,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.roncemer.spark</groupId>
+  <groupId>io.github.technobasant</groupId>
   <artifactId>spark-sql-kinesis_2.13</artifactId>
-  <version>1.2.6_spark-3.4.1</version>
+  <version>1.3.0_spark-4.2.0</version>
   <packaging>jar</packaging>
   <name>Kinesis Integration for Structured Streaming</name>
   <description>Connector to read from and write into Kinesis from Structured Streaming Applications</description>
-  <url>http://github.com/roncemer/spark-sql-kinesis</url>
+  <url>https://github.com/technobasant/spark-sql-kinesis</url>
 
 
   <developers>
@@ -57,32 +57,97 @@
   <licenses>
     <license>
       <name>Apache License, Version 2.0</name>
-      <url>https://github.com/roncemer/spark-sql-kinesis/blob/master/LICENSE</url>
+      <url>https://github.com/technobasant/spark-sql-kinesis/blob/main/LICENSE</url>
       <distribution>repo</distribution>
     </license>
   </licenses>
 
   <scm>
-    <connection>scm:git:git://github.com/roncemer/spark-sql-kinesis.git</connection>
-    <url>http://github.com/roncemer/spark-sql-kinesis</url>
-    <developerConnection>scm:git:git@github.com:roncemer/spark-sql-kinesis.git</developerConnection>
-    <tag>spark-sql-kinesis_2.13-1.2.6_spark-3.4.1</tag>
+    <connection>scm:git:https://github.com/technobasant/spark-sql-kinesis.git</connection>
+    <url>https://github.com/technobasant/spark-sql-kinesis</url>
+    <developerConnection>scm:git:git@github.com:technobasant/spark-sql-kinesis.git</developerConnection>
+    <tag>spark-sql-kinesis_2.13-1.3.0_spark-4.2.0</tag>
   </scm>
 
   <inceptionYear>2018</inceptionYear>
+  <!--
+    Maintainer of this fork. The original authors stay credited in <developers> below:
+    Qubole wrote the connector, Ron Cemer ported it to Spark 3.2 and has since stopped
+    maintaining it.
+  -->
   <organization>
-    <name>Qubole</name>
-    <url>http://www.qubole.com/</url>
+    <name>UXCam</name>
+    <url>https://uxcam.com/</url>
   </organization>
 
   <properties>
     <sbt.project.name>sql-kinesis</sbt.project.name>
-    <spark.version>3.4.1</spark.version>
+    <spark.version>4.2.0</spark.version>
     <scala.binary.version>2.13</scala.binary.version>
-    <fasterxml.jackson.version>2.13.5</fasterxml.jackson.version>
+    <!--
+      Matches spark-parent_2.13:4.2.0's own scala.version, which is also the scala-library
+      that spark-sql pulls in transitively and that the Spark dist ships. Keep compiler and
+      library equal: a compiler older than scala-library trips SIP-51, and a newer one
+      compiles against an older library. Bump only together with Spark.
+    -->
+    <scala.version>2.13.18</scala.version>
+    <java.version>17</java.version>
+    <!--
+      Held at the version spark-parent_2.13:4.2.0 pins, deliberately not the newest jackson.
+      jackson-core/annotations/databind are not shaded into our jar, so at runtime Spark's
+      copy wins; declaring a different version here would only create a compile/runtime skew.
+    -->
+    <fasterxml.jackson.version>2.21.2</fasterxml.jackson.version>
+    <!--
+      AWS SDK v2 replaces v1 (EOL 2025-12-31). Both are current stable releases, ahead of
+      the 2.44.5 / 1.0.6 pair the awslabs connector ships.
+      The KPL groupId moved from com.amazonaws to software.amazon.kinesis; 1.0.x is the
+      SDK-v2-native line and its setCredentialsProvider takes an v2 AwsCredentialsProvider.
+    -->
+    <aws.sdkv2.version>2.51.3</aws.sdkv2.version>
+    <aws.kpl.version>1.0.7</aws.kpl.version>
+    <!--
+      Bundled into the shaded jar because ApacheHttpClient needs them, so their currency is
+      our responsibility rather than the host classpath's. 4.5.14 / 4.4.16 are the final 4.x
+      releases; SDK v2's apache-client is built against the 4.x line, so there is no 5.x path
+      here without swapping the HTTP client itself.
+    -->
+    <httpclient.version>4.5.14</httpclient.version>
+    <httpcore.version>4.4.16</httpcore.version>
+    <!--
+      Maven Central publishing via the Sonatype Central Portal. The namespace
+      io.github.technobasant is verified by GitHub account ownership, so it needs no domain
+      and costs nothing. Central REQUIRES GPG signatures, so signing is on for the release
+      profile; a plain `mvn install` is unaffected because the gpg plugin only runs there.
+    -->
+    <central.publishing.plugin.version>0.11.0</central.publishing.plugin.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
+
+  <!--
+    Jackson artifacts are not released in lockstep (there is no jackson-annotations
+    2.21.2), so individual versions cannot be pinned from one property. Import the BOM
+    and let it resolve each artifact, which is what spark-parent does.
+  -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${fasterxml.jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws.sdkv2.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
@@ -112,67 +177,91 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!--
+      AWS SDK v2. Versions come from the bom import above.
+      KCL 1.x is gone entirely: it existed only for UserRecord.deaggregate, which is now
+      handled by the vendored AggregatorUtil against the KPL protobuf format.
+    -->
     <dependency>
-      <groupId>com.amazonaws</groupId>
-      <artifactId>amazon-kinesis-client</artifactId>
-      <version>1.14.10</version>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>kinesis</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.amazonaws</groupId>
-      <artifactId>aws-java-sdk</artifactId>
-      <version>1.12.452</version>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sts</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.amazonaws</groupId>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>auth</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>regions</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>apache-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.kinesis</groupId>
       <artifactId>amazon-kinesis-producer</artifactId>
-      <version>0.15.6</version>
+      <version>${aws.kpl.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
-      <version>3.21.6</version>
       <!--
-         We are being explicit about version here and overriding the
-         spark default of 2.5.0 because KCL appears to have introduced
-         a dependency on protobuf 2.6.1 somewhere between KCL 1.4.0 and 1.6.1.
-       -->
+        KPL 1.0.7's generated Messages classes are produced by protoc 4.29.0 (its pom
+        declares protobuf-java-version 4.29.0). A newer 4.x runtime accepts older 4.x
+        gencode, so this runs ahead of both KPL's and the awslabs connector's pin to pick up
+        protobuf fixes; AggregatorUtilSuite is what proves the gencode still loads.
+        Do not drop below 4.29.0: on 3.21.6 the generated code dies at class-init with
+        NoClassDefFoundError: com/google/protobuf/RuntimeVersion$RuntimeDomain, which breaks
+        deaggregation at runtime rather than at build time.
+      -->
+      <version>4.35.1</version>
     </dependency>
+    <!-- Explicit so the bundled HTTP stack is pinned by us, not by apache-client's own pom. -->
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>${httpclient.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpcore</artifactId>
+      <version>${httpcore.version}</version>
+    </dependency>
+    <!-- Versions come from the jackson-bom import above. -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-core</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-cbor</artifactId>
-      <version>${fasterxml.jackson.version}</version>
     </dependency>
-    <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <version>4.8.0</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.scalacheck</groupId>
-      <artifactId>scalacheck_${scala.binary.version}</artifactId>
-      <version>1.16.0</version>
-      <scope>test</scope>
-    </dependency>
+    <!--
+      mockito-core and scalacheck were declared here but no test referenced them, so they
+      were dropped rather than upgraded.
+
+      scalatest is pinned to the version spark-parent_2.13:4.1.2 pins, NOT the newest
+      release (3.2.20). Our suites extend StreamTest / SharedSparkSession / OffsetSuite out
+      of Spark's test-jars, which are compiled against 3.2.19; running a different scalatest
+      than those classes were built against risks binary incompatibility for no benefit.
+    -->
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scala.binary.version}</artifactId>
-      <version>3.2.13</version>
+      <version>3.2.19</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -201,7 +290,31 @@
         <plugin>
           <groupId>org.scalatest</groupId>
           <artifactId>scalatest-maven-plugin</artifactId>
-          <version>2.0.0</version>
+          <version>2.2.0</version>
+          <configuration>
+            <!--
+              The plugin forks a JVM and resolves `java` from PATH, which can be an older
+              JDK than the one Maven compiled with (Java 17 classes then fail to load with
+              UnsupportedClassVersionError). Pin the fork to Maven's own JVM.
+              Spark 4 on Java 17 also needs the JDK internals that Spark's own build opens.
+            -->
+            <jvm>${java.home}/bin/java</jvm>
+            <argLine>
+              --add-opens=java.base/java.lang=ALL-UNNAMED
+              --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+              --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+              --add-opens=java.base/java.io=ALL-UNNAMED
+              --add-opens=java.base/java.net=ALL-UNNAMED
+              --add-opens=java.base/java.nio=ALL-UNNAMED
+              --add-opens=java.base/java.util=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+              --add-opens=java.base/sun.security.action=ALL-UNNAMED
+              --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+            </argLine>
+          </configuration>
           <executions>
             <execution>
               <id>test</id>
@@ -214,7 +327,7 @@
         <plugin>
           <groupId>net.alchim31.maven</groupId>
           <artifactId>scala-maven-plugin</artifactId>
-          <version>4.3.0</version>
+          <version>4.9.10</version>
           <executions>
             <execution>
               <id>compile</id>
@@ -240,15 +353,17 @@
             </execution>
           </executions>
           <configuration>
+            <scalaVersion>${scala.version}</scalaVersion>
             <args>
               <arg>-nobootcp</arg>
+              <arg>-release:${java.version}</arg>
             </args>
           </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.8.1</version>
+          <version>3.15.0</version>
           <executions>
             <execution>
               <phase>compile</phase>
@@ -258,14 +373,13 @@
             </execution>
           </executions>
           <configuration>
-            <source>1.8</source>
-            <target>1.8</target>
+            <release>${java.version}</release>
           </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>3.2.1</version>
+          <version>3.6.0</version>
           <executions>
             <execution>
               <phase>package</phase>
@@ -275,12 +389,19 @@
               <configuration>
                 <artifactSet>
                   <includes>
-                    <include>com.amazonaws:amazon-kinesis-client:*</include>
-                    <include>com.amazonaws:amazon-kinesis-producer:*</include>
-                    <include>com.amazonaws:aws-java-sdk-kinesis:*</include>
-                    <include>com.amazonaws:aws-java-sdk-dynamodb:*</include>
-                    <include>com.amazonaws:aws-java-sdk-core:*</include>
-                    <include>com.amazonaws:aws-java-sdk-sts:*</include>
+                    <include>software.amazon.awssdk:*:*</include>
+                    <include>software.amazon.eventstream:eventstream:*</include>
+                    <include>software.amazon.kinesis:amazon-kinesis-producer:*</include>
+                    <include>org.reactivestreams:reactive-streams:*</include>
+                    <include>io.netty:netty-*:*</include>
+                    <!--
+                      ApacheHttpClient (pinned in KinesisReader/STSCredentials) needs these at
+                      runtime. Without them the client fails with NoClassDefFoundError on
+                      org.apache.http.protocol.HttpContext; relying on Spark/Hadoop's own copy
+                      would make the connector's HTTP stack depend on the host classpath.
+                    -->
+                    <include>org.apache.httpcomponents:httpclient:*</include>
+                    <include>org.apache.httpcomponents:httpcore:*</include>
                     <include>com.fasterxml.jackson.dataformat:*:*</include>
                     <include>com.google.protobuf:*:*</include>
                   </includes>
@@ -294,11 +415,41 @@
                     </includes>
                   </relocation>
                   <relocation>
-                    <pattern>com.amazonaws</pattern>
-                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.amazonaws</shadedPattern>
+                    <pattern>software.amazon.awssdk</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.awssdk</shadedPattern>
                     <includes>
-                      <include>com.amazonaws.**</include>
+                      <include>software.amazon.awssdk.**</include>
                     </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>software.amazon.eventstream</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.eventstream</shadedPattern>
+                    <includes>
+                      <include>software.amazon.eventstream.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>software.amazon.kinesis</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.software.amazon.kinesis</shadedPattern>
+                    <includes>
+                      <include>software.amazon.kinesis.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>org.reactivestreams</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.org.reactivestreams</shadedPattern>
+                  </relocation>
+                  <!-- Relocated so the bundled copy cannot clash with Hadoop's httpclient. -->
+                  <relocation>
+                    <pattern>org.apache.http</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.org.apache.http</shadedPattern>
+                    <includes>
+                      <include>org.apache.http.**</include>
+                    </includes>
+                  </relocation>
+                  <relocation>
+                    <pattern>io.netty</pattern>
+                    <shadedPattern>org.apache.spark.sql.kinesis.shaded.io.netty</shadedPattern>
                   </relocation>
                   <relocation>
                     <pattern>com.google.protobuf</pattern>
@@ -344,17 +495,17 @@
       <plugin>
         <groupId>net.alchim31.maven</groupId>
         <artifactId>scala-maven-plugin</artifactId>
-        <version>4.3.0</version>
+        <version>4.9.10</version>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>3.2.1</version>
+        <version>3.6.0</version>
       </plugin>
       <plugin>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest-maven-plugin</artifactId>
-        <version>2.0.0</version>
+        <version>2.2.0</version>
       </plugin>
     </plugins>
 
@@ -370,7 +521,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-source-plugin</artifactId>
-            <version>3.2.1</version>
+            <version>3.4.0</version>
             <executions>
               <execution>
                 <id>attach-sources</id>
@@ -380,10 +531,33 @@
               </execution>
             </executions>
           </plugin>
+          <!--
+            Signs every artifact; Central rejects unsigned uploads.
+
+            The loopback pinentry mode below is required rather than optional. gpg 2.x
+            delegates the passphrase prompt to pinentry, which needs a controlling terminal;
+            Maven forks gpg without one, so the default path dies with "signing failed:
+            Inappropriate ioctl for device" AFTER the tests, shading and javadoc have all
+            completed. Loopback makes gpg read the passphrase directly instead of drawing a
+            prompt, and modern gpg permits it by default (only gpg-agent's
+            no-allow-loopback-pinentry option turns it off).
+
+            Supply the passphrase through the MAVEN_GPG_PASSPHRASE environment variable, which
+            maven-gpg-plugin 3.2.x reads natively. Not the gpg.passphrase property (it lands
+            in the process list) and not settings.xml (it lands on disk). With the variable
+            unset and a terminal available, gpg prompts as usual, so interactive releases
+            still work.
+          -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
-            <version>1.5</version>
+            <version>3.2.8</version>
+            <configuration>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
             <executions>
               <execution>
                 <id>sign-artifacts</id>
@@ -397,7 +571,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
-            <version>2.10.1</version>
+            <version>3.12.0</version>
             <executions>
               <execution>
                 <id>create-javadoc-jar</id>
@@ -410,21 +584,36 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-release-plugin</artifactId>
-            <version>2.5.1</version>
+            <version>3.3.1</version>
             <configuration>
               <autoVersionSubmodules>true</autoVersionSubmodules>
             </configuration>
           </plugin>
 
+          <!--
+            Publishes to Maven Central through the Sonatype Central Portal.
+            Replaces nexus-staging-maven-plugin, which targeted OSSRH
+            (s01.oss.sonatype.org) — retired by Sonatype, so the previous configuration was
+            dead: `mvn deploy -Prelease` would have uploaded to a host that no longer
+            accepts uploads.
+
+            Requires a Central Portal user token in ~/.m2/settings.xml under
+            <server><id>central</id>, and the namespace io.github.technobasant verified once
+            in the Portal (GitHub account ownership — no domain needed). See PUBLISHING.md.
+
+            autoPublish=false leaves the deployment staged in the Portal for a manual
+            "Publish" click. Central releases are IMMUTABLE once published, so the first
+            few releases should be reviewed there before promoting.
+          -->
           <plugin>
-            <groupId>org.sonatype.plugins</groupId>
-            <artifactId>nexus-staging-maven-plugin</artifactId>
-            <version>1.6.7</version>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>${central.publishing.plugin.version}</version>
             <extensions>true</extensions>
             <configuration>
-              <serverId>ossrh</serverId>
-              <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
-              <autoReleaseAfterClose>true</autoReleaseAfterClose>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>false</autoPublish>
+              <waitUntil>validated</waitUntil>
             </configuration>
           </plugin>
         </plugins>
@@ -432,16 +621,12 @@
     </profile>
   </profiles>
 
-  <distributionManagement>
-    <snapshotRepository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
-    </snapshotRepository>
-    <repository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-    </repository>
-  </distributionManagement>
+  <!--
+    No <distributionManagement> is needed: central-publishing-maven-plugin uploads directly
+    to the Sonatype Central Portal, which superseded the OSSRH repositories this block used
+    to point at. Central does not accept SNAPSHOTs through this path, so snapshot builds stay
+    local (`mvn install`).
+  -->
 
   <reporting>
     <plugins>
