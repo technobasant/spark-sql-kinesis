@@ -18,13 +18,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.roncemer.spark</groupId>
+  <groupId>io.github.technobasant</groupId>
   <artifactId>spark-sql-kinesis_2.13</artifactId>
   <version>1.3.0_spark-4.2.0</version>
   <packaging>jar</packaging>
   <name>Kinesis Integration for Structured Streaming</name>
   <description>Connector to read from and write into Kinesis from Structured Streaming Applications</description>
-  <url>http://github.com/roncemer/spark-sql-kinesis</url>
+  <url>https://github.com/technobasant/spark-sql-kinesis</url>
 
 
   <developers>
@@ -57,22 +57,27 @@
   <licenses>
     <license>
       <name>Apache License, Version 2.0</name>
-      <url>https://github.com/roncemer/spark-sql-kinesis/blob/master/LICENSE</url>
+      <url>https://github.com/technobasant/spark-sql-kinesis/blob/main/LICENSE</url>
       <distribution>repo</distribution>
     </license>
   </licenses>
 
   <scm>
-    <connection>scm:git:git://github.com/roncemer/spark-sql-kinesis.git</connection>
-    <url>http://github.com/roncemer/spark-sql-kinesis</url>
-    <developerConnection>scm:git:git@github.com:roncemer/spark-sql-kinesis.git</developerConnection>
+    <connection>scm:git:https://github.com/technobasant/spark-sql-kinesis.git</connection>
+    <url>https://github.com/technobasant/spark-sql-kinesis</url>
+    <developerConnection>scm:git:git@github.com:technobasant/spark-sql-kinesis.git</developerConnection>
     <tag>spark-sql-kinesis_2.13-1.3.0_spark-4.2.0</tag>
   </scm>
 
   <inceptionYear>2018</inceptionYear>
+  <!--
+    Maintainer of this fork. The original authors stay credited in <developers> below:
+    Qubole wrote the connector, Ron Cemer ported it to Spark 3.2 and has since stopped
+    maintaining it.
+  -->
   <organization>
-    <name>Qubole</name>
-    <url>http://www.qubole.com/</url>
+    <name>UXCam</name>
+    <url>https://uxcam.com/</url>
   </organization>
 
   <properties>
@@ -109,6 +114,13 @@
     -->
     <httpclient.version>4.5.14</httpclient.version>
     <httpcore.version>4.4.16</httpcore.version>
+    <!--
+      Maven Central publishing via the Sonatype Central Portal. The namespace
+      io.github.technobasant is verified by GitHub account ownership, so it needs no domain
+      and costs nothing. Central REQUIRES GPG signatures, so signing is on for the release
+      profile; a plain `mvn install` is unaffected because the gpg plugin only runs there.
+    -->
+    <central.publishing.plugin.version>0.11.0</central.publishing.plugin.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
@@ -555,15 +567,30 @@
             </configuration>
           </plugin>
 
+          <!--
+            Publishes to Maven Central through the Sonatype Central Portal.
+            Replaces nexus-staging-maven-plugin, which targeted OSSRH
+            (s01.oss.sonatype.org) — retired by Sonatype, so the previous configuration was
+            dead: `mvn deploy -Prelease` would have uploaded to a host that no longer
+            accepts uploads.
+
+            Requires a Central Portal user token in ~/.m2/settings.xml under
+            <server><id>central</id>, and the namespace io.github.technobasant verified once
+            in the Portal (GitHub account ownership — no domain needed). See PUBLISHING.md.
+
+            autoPublish=false leaves the deployment staged in the Portal for a manual
+            "Publish" click. Central releases are IMMUTABLE once published, so the first
+            few releases should be reviewed there before promoting.
+          -->
           <plugin>
-            <groupId>org.sonatype.plugins</groupId>
-            <artifactId>nexus-staging-maven-plugin</artifactId>
-            <version>1.6.7</version>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>${central.publishing.plugin.version}</version>
             <extensions>true</extensions>
             <configuration>
-              <serverId>ossrh</serverId>
-              <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
-              <autoReleaseAfterClose>true</autoReleaseAfterClose>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>false</autoPublish>
+              <waitUntil>validated</waitUntil>
             </configuration>
           </plugin>
         </plugins>
@@ -571,16 +598,12 @@
     </profile>
   </profiles>
 
-  <distributionManagement>
-    <snapshotRepository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
-    </snapshotRepository>
-    <repository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-    </repository>
-  </distributionManagement>
+  <!--
+    No <distributionManagement> is needed: central-publishing-maven-plugin uploads directly
+    to the Sonatype Central Portal, which superseded the OSSRH repositories this block used
+    to point at. Central does not accept SNAPSHOTs through this path, so snapshot builds stay
+    local (`mvn install`).
+  -->
 
   <reporting>
     <plugins>
