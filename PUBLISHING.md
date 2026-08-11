@@ -59,16 +59,22 @@ RSA rather than Ed25519: EdDSA signatures have historically tripped Central's va
 and a rejected deployment is more annoying here than elsewhere because published versions
 are immutable — a bad release can only be superseded, never replaced.
 
-The pom deliberately gives `maven-gpg-plugin` no passphrase configuration, so signing goes
-through `gpg-agent` and its pinentry prompt. That keeps the passphrase out of the command
-line and out of `settings.xml`, which is what the plugin's own best-practices mode wants.
-Run the release from an interactive terminal so the prompt can appear. If the agent cannot
-reach a pinentry (a CI runner, say), pass the passphrase from an environment variable
-instead of a literal:
+**The passphrase must come from `MAVEN_GPG_PASSPHRASE`.** gpg 2.x delegates its prompt to
+pinentry, which needs a controlling terminal; Maven forks gpg without one, so signing fails
+with `signing failed: Inappropriate ioctl for device` — and it fails at the *end* of the
+build, after tests, shading and javadoc have all run. The pom therefore passes
+`--pinentry-mode loopback`, which makes gpg read the passphrase instead of drawing a prompt.
+
+`maven-gpg-plugin` 3.2.x reads `MAVEN_GPG_PASSPHRASE` natively. Prefer it over
+`-Dgpg.passphrase` (visible in the process list) and over `settings.xml` (persisted to
+disk):
 
 ```bash
-mvn -Prelease clean deploy -Dgpg.passphrase="$GPG_PASSPHRASE" -Dgpg.pinentry-mode=loopback
+export MAVEN_GPG_PASSPHRASE='<key passphrase>'
 ```
+
+With the variable unset and a real terminal available, gpg prompts normally, so interactive
+releases from a terminal still work without it.
 
 Publish the *public* half so Central can verify the signatures — it checks public
 keyservers, and an unpublished key fails validation:
@@ -109,12 +115,21 @@ release shell instead. A literal token also works if the file is `chmod 600`.
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)     # Java 17 is required
 
+# Credentials for this shell only — none of the three are stored on disk.
+export MAVEN_GPG_PASSPHRASE='<key passphrase>'
+export CENTRAL_TOKEN_USER='<portal token username>'
+export CENTRAL_TOKEN_PASS='<portal token password>'
+
 # 1. Dry run: everything the release does except signing and upload.
 mvn -Prelease clean verify -Dgpg.skip=true
 
 # 2. Real release.
 mvn -Prelease clean deploy
 ```
+
+All three variables must be exported in the *same* shell that runs Maven. Exporting them in
+one terminal and running Maven in another is the most common cause of a build that reaches
+signing or upload and then fails on empty credentials.
 
 `-Prelease` adds the four things Central requires beyond a normal build: a sources jar, a
 javadoc jar, GPG signatures for every artifact, and the

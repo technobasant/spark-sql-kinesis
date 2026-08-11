@@ -531,10 +531,33 @@
               </execution>
             </executions>
           </plugin>
+          <!--
+            Signs every artifact; Central rejects unsigned uploads.
+
+            The loopback pinentry mode below is required rather than optional. gpg 2.x
+            delegates the passphrase prompt to pinentry, which needs a controlling terminal;
+            Maven forks gpg without one, so the default path dies with "signing failed:
+            Inappropriate ioctl for device" AFTER the tests, shading and javadoc have all
+            completed. Loopback makes gpg read the passphrase directly instead of drawing a
+            prompt, and modern gpg permits it by default (only gpg-agent's
+            no-allow-loopback-pinentry option turns it off).
+
+            Supply the passphrase through the MAVEN_GPG_PASSPHRASE environment variable, which
+            maven-gpg-plugin 3.2.x reads natively. Not the gpg.passphrase property (it lands
+            in the process list) and not settings.xml (it lands on disk). With the variable
+            unset and a terminal available, gpg prompts as usual, so interactive releases
+            still work.
+          -->
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
             <version>3.2.8</version>
+            <configuration>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
             <executions>
               <execution>
                 <id>sign-artifacts</id>
