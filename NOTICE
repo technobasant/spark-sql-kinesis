@@ -1,0 +1,35 @@
+Kinesis Connector for Spark Structured Streaming
+Copyright 2018-2026 the original authors and contributors
+
+This product includes software developed at Qubole Inc. (http://www.qubole.com/),
+which authored the original connector.
+
+Portions were contributed by Ron Cemer, who ported the connector to Spark 3.2 and
+Scala 2.13.
+
+This product is currently maintained by UXCam (https://uxcam.com/) and released
+under the namespace io.github.technobasant.
+
+Licensed under the Apache License, Version 2.0. Individual source files carry the
+Apache Software Foundation license header, which refers to this file.
+
+--------------------------------------------------------------------------------
+
+The structure of this connector is modelled on components of Apache Spark
+(https://spark.apache.org/), specifically the Kafka source for Structured
+Streaming and the Kinesis source for legacy Streaming.
+  Copyright 2014 and onwards The Apache Software Foundation
+  Licensed under the Apache License, Version 2.0
+
+org.apache.spark.sql.kinesis.AggregatorUtil reproduces the record deaggregation
+semantics of the Amazon Kinesis Client Library
+(https://github.com/awslabs/amazon-kinesis-client), in particular the behaviour of
+UserRecord.deaggregate, without depending on that library.
+  Copyright Amazon.com, Inc. or its affiliates
+  Licensed under the Apache License, Version 2.0
+
+The KPL aggregation message definitions used for deaggregation originate with the
+Amazon Kinesis Producer Library
+(https://github.com/awslabs/amazon-kinesis-producer).
+  Copyright Amazon.com, Inc. or its affiliates
+  Licensed under the Apache License, Version 2.0

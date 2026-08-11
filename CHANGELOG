@@ -1,6 +1,49 @@
 Changelog
 =========
 
+spark-sql-kinesis_2.13-1.3.0_spark-4.2.0
+----------------------------
+- BREAKING: requires Spark 4.2.0, Scala 2.13.18 and Java 17. SparkAWSCredentials.provider now
+  returns software.amazon.awssdk.auth.credentials.AwsCredentialsProvider in place of the AWS SDK
+  v1 AWSCredentialsProvider.
+
+- Port to AWS SDK v2. AWS SDK v1 reached end of life on 2025-12-31, so v1 could not be carried
+  forward. The region is now parsed from the endpoint URL because v2 removed RegionUtils' reverse
+  lookup. STS support moves to StsAssumeRoleCredentialsProvider, and the IMDS retry wrapper
+  delegates rather than extends because v2's InstanceProfileCredentialsProvider is final.
+
+- Port to Spark 4.2.0. SerializedOffset, MemoryStream and LongOffset moved to
+  org.apache.spark.sql.execution.streaming.runtime, OffsetSeq and OffsetSeqLog to
+  ...streaming.checkpointing, and internalCreateDataFrame is now exposed only on
+  classic.SQLContext.
+
+- Drop the KCL dependency. KCL 1.x reached end of life on 2026-01-30. Record deaggregation is
+  handled by a new AggregatorUtil, which decodes the KPL aggregation format using the protobuf
+  classes the KPL already ships, removing KCL's DynamoDB, CloudWatch and Netty transitives.
+  Sub-records keep the parent sequence number, matching KCL 1.x's UserRecord, because this
+  connector checkpoints on Record.sequenceNumber().
+
+- The KPL moves to groupId software.amazon.kinesis; 1.0.7 accepts an SDK v2 credentials provider,
+  so the sink and its aggregation are retained unchanged.
+
+- Fix: SparkAWSCredentials.Builder stored basicSessionCreds but never consulted it, so
+  basicSessionCredentials(...) silently had no effect. Latent in all previous releases.
+
+- Fix: listShards pagination sent streamName and nextToken together, which the API rejects.
+
+- Publishing moves to Maven Central under io.github.technobasant via the Sonatype Central Portal.
+  The previous nexus-staging configuration targeted OSSRH (s01.oss.sonatype.org), which Sonatype
+  has retired, so the release path was already non-functional. See PUBLISHING.md.
+
+- No option names, checkpoint format or on-disk layout changed, so a running query upgrades in
+  place against its existing checkpoint.
+
+spark-sql-kinesis_2.13-1.2.6_spark-3.4.1
+----------------------------
+- Build against Spark 3.4.1 with Scala 2.13, KCL 1.14.10 and aws-java-sdk 1.12.452. Never
+  published to Maven Central; recorded here retrospectively because the version shipped as a
+  hand-built jar.
+
 spark-sql-kinesis_2.13-1.2.2_spark-3.2
 ----------------------------
 - Switch to aws-java-sdk 1.11.901 to be compatible with hadoop-aws 3.2.4.

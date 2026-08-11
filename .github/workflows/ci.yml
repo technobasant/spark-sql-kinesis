@@ -1,0 +1,81 @@
+# Replaces the abandoned .travis.yml. The repository previously had no working CI, which is how a
+# pom with an XML-illegal comment ("--" inside <!-- -->) reached a commit: nothing read the build
+# file until someone ran Maven locally.
+#
+# Deliberately runs `verify` under the release profile rather than plain `test`, because the steps
+# that break most often are the ones after the tests: shading, the sources and javadoc jars, and
+# the pom that gets published. Signing is skipped since CI holds no key.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java 17 is a hard requirement: Spark 4.2.0 targets it, and the connector is compiled
+      # with `release 17`.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      # The integration suites (ENABLE_KINESIS_SQL_TESTS) create real Kinesis streams and cost
+      # money, so they stay disabled here. The unit suites need no AWS access.
+      - name: Build, test and package
+        run: mvn -B -Prelease clean verify -Dgpg.skip=true
+
+      # Cheap assertions that catch the packaging regressions unit tests cannot see. Each of
+      # these has actually been broken at some point during the SDK v2 port.
+      - name: Verify the shaded jar
+        run: |
+          JAR=$(ls target/spark-sql-kinesis_2.13-*.jar | grep -vE 'sources|javadoc|original' | head -1)
+          echo "Checking $JAR"
+
+          # The source must still be discoverable as .format("kinesis").
+          unzip -p "$JAR" META-INF/services/org.apache.spark.sql.sources.DataSourceRegister \
+            | grep -qx 'org.apache.spark.sql.kinesis.KinesisSourceProvider' \
+            || { echo "::error::DataSourceRegister missing or wrong"; exit 1; }
+
+          # AWS SDK v1 is end of life and must not creep back in transitively.
+          if unzip -l "$JAR" | grep -q 'com/amazonaws/'; then
+            echo "::error::AWS SDK v1 (com.amazonaws) present in the shaded jar"; exit 1
+          fi
+
+          # Anything bundled but unrelocated will collide with Spark's or hadoop-aws's copy.
+          for pkg in software/amazon/awssdk/ io/netty/ org/apache/http/ com/google/protobuf/; do
+            if unzip -l "$JAR" | grep -qE " $pkg"; then
+              echo "::error::$pkg is bundled without relocation"; exit 1
+            fi
+          done
+
+          # A sources jar holding only the Java files is the usual failure here; most of the
+          # connector is Scala.
+          SRC=$(ls target/spark-sql-kinesis_2.13-*-sources.jar | head -1)
+          COUNT=$(unzip -l "$SRC" | grep -c '\.scala$')
+          [ "$COUNT" -ge 14 ] || { echo "::error::sources jar has only $COUNT scala files"; exit 1; }
+
+          echo "Shaded jar OK"
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars
+          path: |
+            target/*.jar
+          retention-days: 7
+          if-no-files-found: warn
